@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────────────────
+# 换行符策略
+#
+# ★ 为什么必须有这个文件 ★
+#
+#   .cmd 批处理【必须】是 CRLF。如果仓库里存成 LF，cmd.exe 会把中文和引号
+#   当成一条条命令，报一堆：
+#       'openai<1.60"' is not recognized as an internal or external command
+#       'Monitor。' is not recognized as an internal or external command
+#   而且窗口一闪而过，极难排查。本项目真的踩过这个坑。
+#
+#   光靠 core.autocrlf 不够 —— 那是【每个人本机】的设置，队友可能设成 false，
+#   那时 clone 下来拿到的就是 LF，脚本直接不能跑。
+#   .gitattributes 是【跟着仓库走】的，能强制覆盖本机设置。
+# ─────────────────────────────────────────────────────────────────────────
+
+# ---- Windows 脚本：强制 CRLF，无论在谁的机器上 clone ----
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# ---- 源码与文档：统一 LF，跨平台一致 ----
+*.py    text eol=lf
+*.c     text eol=lf
+*.h     text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.gn    text eol=lf
+*.gni   text eol=lf
+*.ini   text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.txt   text eol=lf
+
+# ---- 日志是【真机实测证据】，必须逐字节保持原样 ----
+# 设备发出来的是 CRLF，转换会改变证据内容，所以声明为"不做任何转换"
+*.log   -text
+
+# ---- 二进制：禁止任何转换 ----
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bin   binary
+*.exe   binary
+*.zip   binary

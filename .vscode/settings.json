@@ -1,0 +1,63 @@
+{
+  // ────────────────────────────────────────────────────────────────────────
+  // OpenHarmony 日志智能聚合分析工具 —— 团队共享的 VSCode 配置
+  //
+  // 本项目使用【仓库内的虚拟环境】.venv（基于 Python 3.8.8 创建）
+  //   E:\Code\Harmony\.venv\Scripts\python.exe
+  //
+  // 为什么用虚拟环境，而不是直接指向某个系统 Python？
+  //   ① 路径在仓库内，组里每台电脑都一样，本配置提交后全组直接生效；
+  //      C:\Users\<用户名>\... 只存在于各自电脑上，无法共享。
+  //   ② 不写任何系统 Python 的 site-packages，绕开 Windows 跨账户
+  //      AppData 的写权限问题（实测：跨用户 pip install 会报 WinError 5）。
+  //   ③ 依赖（pyserial 等）与系统环境隔离，不会因为别人装了什么而互相干扰。
+  //   ④ 直接解决了"中文用户名路径"问题：.venv 在 E: 盘，路径全 ASCII。
+  //
+  // ── 每台电脑首次使用（克隆仓库后执行一次）──────────────────────────────
+  //   python -m venv .venv                                   # 用本机任意 3.8+ 创建
+  //   .venv\Scripts\python.exe -m pip install pyserial
+  //   （若 .venv 已随仓库拷过来，跳过创建，只需确认 pyserial 在）
+  //
+  // ── 在终端里用它 ──────────────────────────────────────────────────────
+  //   .venv\Scripts\Activate.ps1        # 激活后直接敲 python 即可
+  //   若提示禁止运行脚本，执行一次：
+  //     Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+  //
+  // ⚠️ 关键：VSCode 里选解释器只影响【编辑器内的运行/调试按钮】和 Pylance 补全，
+  //          【不影响终端里敲 python 用哪个】。终端看 PATH / 是否激活，见 README §0.5。
+  // ────────────────────────────────────────────────────────────────────────
+
+  "python.defaultInterpreterPath": "E:\\Code\\Harmony\\.venv\\Scripts\\python.exe",
+
+  // Pylance / 语言服务
+  "python.languageServer": "Pylance",
+
+  // 让 VSCode 自动激活 .venv，省去手动 Activate
+  "python.terminal.activateEnvironment": true,
+
+  // 终端里跑 pytest 时用同一个解释器（若日后装了 pytest）
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+
+  // 采集器的日志输出目录，避免 VSCode 搜索/监视时被日志刷屏
+  "files.watcherExclude": {
+    "**/logs/**": true,
+    "**/data/**": true,
+    "**/.cache/**": true
+  },
+  "search.exclude": {
+    "**/logs": true,
+    "**/data": true,
+    "**/.venv": true,
+    "**/Tool": true,
+    "**/harmony_sdk": true,
+    "**/.cache": true
+  },
+
+  // SDK 源码树很庞大，关掉文件关联的干扰
+  "files.associations": {
+    "*.gn": "gn",
+    "*.gni": "gn"
+  }
+}

@@ -1,0 +1,40 @@
+# Copyright (c) 2026 OpenHarmony 日志智能聚合分析工具项目组
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# 依赖来源：完全照搬 vendor/hqyj/fs_hi3861/demo/base_06_i2c_sht20/BUILD.gn
+# 那份是官方验证过能编译通过的配置，不要凭感觉改 include_dirs。
+static_library("agri_logger") {
+    sources = [
+        "agri_logger_multi.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_pcf8574.c",
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_sht20.c",
+        # ★ AP3216C（真实光照来源）的驱动实现必须在这里显式列出。
+        #   踩过的坑：只 #include 头文件能【编译】通过，但【链接期】报
+        #     undefined reference to `AP3216C_Init'
+        #   因为 GN 不会自动把 BSP 的 .c 编进来，必须点名。
+        #   报错出现在 [328/329] 链接阶段、前面编译全过 —— 很容易误判成代码有 bug。
+        #   对照：vendor/hqyj/fs_hi3861/demo/base_07_i2c_ap3216c/BUILD.gn
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_ap3216c.c",
+        # ★ SSD1306（板载 0.96" OLED，显示实时温湿度光照）同样必须显式列出。
+        #   只需这一个 .c —— 位图字库 hal_bsp_ssd1306_bmps.c 是给 SSD1306_DrawBMP
+        #   用的，我们只显示字符串，不需要（官方 base_08_i2c_ssd1306/BUILD.gn 也只列这一个）。
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_ssd1306.c"
+    ]
+
+    include_dirs = [
+        "//utils/native/lite/include",
+        "//kernel/liteos_m/kal/cmsis",
+        "//base/iot_hardware/peripheral/interfaces/kits",
+        "//vendor/hqyj/fs_hi3861/common/bsp/include"
+    ]
+}

@@ -1,0 +1,27 @@
+# Copyright (c) 2020 Huawei Device Co., Ltd.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import("//build/lite/config/component/lite_component.gni") 
+lite_component("app") { 
+    features = [ 
+        # ───────────────────────────────────────────────────────────────
+        # 本项目当前编译目标：规范日志应用（阶段 1）
+        #
+        # ⚠️ 一次只启用一个目标。切换时注释掉一个、取消注释另一个即可。
+        # ───────────────────────────────────────────────────────────────
+        "agri_logger:agri_logger", 
+
+        # 官方 demo（需要对比"规范格式 vs 非规范格式"时切回来）：
+        # "//vendor/hqyj/fs_hi3861/demo:demo", 
+    ] 
+} 

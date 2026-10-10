@@ -1,0 +1,300 @@
+/*
+ * Copyright (c) 2026 OpenHarmony 日志智能聚合分析工具项目组
+ *
+ * 【规范日志参考实现】—— 阶段 1：单 zone + 真实传感器 + 规范日志
+ *
+ * 这个 demo 的作用是【验证接口契约】：它用 log_def.h 输出规范日志，
+ * 应能被 Python 解析器以 ≥99% 的成功率解析。
+ *
+ * 与官方 base_06_i2c_sht20 的区别：
+ *   base_06（官方）: printf("temperature = %.2f  humidity = %.2f")   ← 无前缀、无字段，解析率 0%
+ *   本 demo（规范）: 000120.456789 I A001 AgriSensor: 1 24 2 281 3 466 7 120456 z=A
+ *
+ * 【三阶段演进路线】—— 这就是"分段开发"的锚点
+ *   阶段 1（本文件）: 1 个任务，1 个 zone(A)，真实传感器，规范日志，异常降级
+ *   阶段 2（W3）    : 6 个 zone 任务 + 故障注入器 + 健康自检（堆/栈水位）
+ *   阶段 3（加分）  : MQTT 上行 + WiFi 断连/恢复日志
+ *
+ * 部署方式：把 firmware/hi3861/agri_logger/ 整个目录拷到
+ *   hi3861_application/src/applications/sample/wifi-iot/app/agri_logger/
+ * 然后改 app/BUILD.gn：features = [ "agri_logger:agri_logger" ]
+ * 并新建 agri_logger/BUILD.gn（见文件末尾注释）
+ */
+
+#include <stdio.h>
+#include <unistd.h>
+
+#include "ohos_init.h"
+#include "cmsis_os2.h"
+#include "hi_io.h"
+#include "hi_gpio.h"
+#include "hal_bsp_sht20.h"
+#include "hal_bsp_pcf8574.h"
+
+#include "log_def.h"
+
+/* ==========================================================================
+ * 配置
+ * ======================================================================== */
+#define AGRI_ZONE           'A'      /* 阶段 1 只做 zone A；阶段 2 扩展到 A~F */
+
+/* 上报周期：题目要求"每 5 秒上报一次"。
+ * 调试期曾临时调到 1000ms 以加快问题暴露，验证稳定后改回 5000ms。 */
+#define REPORT_PERIOD_MS    5000
+
+/* 每轮输出的日志条数开关。
+ *   1 = 精简模式（每轮 1 条），用于二分定位"是不是日志量太大导致复位"
+ *   0 = 正常模式（每轮约 4 条：探针 + 传感 + 上报 + 阈值），正式运行用这个
+ * 稳定性已通过 70 秒压力测试（零重启、seq 完全连续），故恢复为正常模式。 */
+#define AGRI_MINIMAL_LOG    0
+
+/* ★ 任务栈大小 —— 实测踩坑记录 ★
+ *
+ * 初版照抄官方 base_06 的 1024 字节，结果板子【只输出 1 轮就复位】。
+ * 原因是我们的任务比官方 demo 重得多，光日志缓冲区就需要：
+ *     msg[120] + b1..b4[40]*4 = 280 字节
+ * 加上 SHT20_ReadData 内部开销与 snprintf 的栈占用，1KB 必然溢出，
+ * 而 LiteOS-M 上栈溢出的表现就是【静默复位】——非常难排查。
+ *
+ * 教训：日志缓冲区大小要算进任务栈预算。宁可给大，不要给小。
+ */
+#define TASK_STACK_SIZE     (1024 * 4)
+
+#define TEMP_HIGH_X10       350      /* 高温阈值 35.0℃ → 触发通风             */
+#define TEMP_LOW_X10        50       /* 低温阈值 5.0℃                         */
+#define TEMP_INVALID_X10    850      /* 传感器失效时的典型值 85.0℃            */
+#define FAIL_STREAK_OFFLINE 5        /* 连续失败几次判定"传感器离线"          */
+
+/* 湿度阈值 —— 题目原文："模拟湿度低于阈值时输出 WARN 并触发'灌溉'状态日志"
+ * 灌溉是"缺水才浇"，所以判据是【湿度偏低】，不是偏高。 */
+#define HUMI_LOW_X10        400      /* 湿度低于 40.0% → 开灌溉               */
+#define HUMI_TARGET_X10     550      /* 湿度回升到 55.0% → 停灌溉             */
+
+/* ==========================================================================
+ * 延时方式 —— 又一个踩坑点
+ *
+ * 实测：用 osDelay(5000) 时板子【每轮跑完就复位】。而官方 base_06 demo 用的是
+ * sleep()/usleep()（POSIX，单位明确），一直跑得很稳。
+ *
+ * osDelay() 的参数单位是【RTOS tick】，不是毫秒。tick 频率随 SDK 配置而变，
+ * 传 5000 到底延时多久取决于 osKernelGetTickFreq()，很容易超出预期。
+ *
+ * 因此这里统一改用 usleep()（微秒，语义无歧义），并与官方 demo 保持一致。
+ * ========================================================================== */
+#define MS_TO_US(ms)        ((ms) * 1000)
+
+/* ==========================================================================
+ * 状态
+ * ======================================================================== */
+static unsigned g_seq = 0;
+static int      g_fail_streak = 0;      /* 连续读取失败次数       */
+static int      g_temp_x10 = 0;         /* 最近一次有效温度 ×10   */
+static int      g_humi_x10 = 0;         /* 最近一次有效湿度 ×10   */
+static int      g_irrigating = 0;       /* 灌溉状态机（湿度低触发） */
+static int      g_venting = 0;          /* 通风状态机（温度高触发） */
+
+/* ==========================================================================
+ * 小工具：把 "ID:值" 组装进调用方提供的缓冲
+ *
+ * 为什么要传缓冲：AGRI_LOG 宏按值接收字符串，必须先用具名缓冲拼好再传。
+ * 每次调用一个独立缓冲，避免互相覆盖。
+ * ======================================================================== */
+#define F(buf, id, val)   (snprintf((buf), sizeof(buf), "%d:%d", (id), (int)(val)), (buf))
+
+/* ==========================================================================
+ * 采集任务
+ * ======================================================================== */
+static void agri_sensor_task(void)
+{
+    char fa[16], fb[16], fc[16], fd[16];
+
+    /* ---- 启动日志（生命周期事件 F5001）---- */
+    AGRI_I(DOM_HEALTH, "AgriHealth", '-',
+           F(fa, AGRI_F_SEQ, 0), "5:5001", "6:6", NULL);
+
+    while (1) {
+        float temperature = 0.0f;
+        float humidity = 0.0f;
+
+        g_seq++;
+
+        /* ---- 定位探针：每轮开头打一条 ----
+         * 配合"重启后 seq 从 1 重新开始"可以判断板子崩在第几轮。
+         * 用 AGRI_MINIMAL_LOG 控制：调试时置 1，正式运行时置 0 关掉。 */
+#if AGRI_MINIMAL_LOG
+        AGRI_I(DOM_TASK, "AgriTask", AGRI_ZONE,
+               F(fa, AGRI_F_SEQ, g_seq), NULL, NULL, NULL);
+#endif
+
+        if (SHT20_ReadData(&temperature, &humidity) != 0) {
+            /* ================= 异常分支 1：读取失败 ================= */
+            g_fail_streak++;
+
+            AGRI_E(DOM_SENSOR, "AgriSensor", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_SENSOR_TIMEOUT),
+                   F(fc, AGRI_F_CODE, AGRI_CODE_RESET_TIMEOUT),
+                   F(fd, AGRI_F_RETRY, g_fail_streak));
+
+            if (g_fail_streak >= FAIL_STREAK_OFFLINE) {
+                /* 连续失败累计到阈值 → 升级为"传感器离线" */
+                AGRI_E(DOM_SENSOR, "AgriSensor", AGRI_ZONE,
+                       F(fa, AGRI_F_SEQ, g_seq),
+                       F(fb, AGRI_F_FAULT, AGRI_FAULT_SENSOR_OFFLINE),
+                       F(fc, AGRI_F_CODE, AGRI_CODE_NO_RESPONSE),
+                       F(fd, AGRI_F_MISS, g_fail_streak));
+            }
+
+            /* 降级运行：标记状态并输出上次有效值，让上层知道数据不可信 */
+            AGRI_W(DOM_SENSOR, "AgriSensor", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_STATE, 3),              /* 3 = degraded */
+                   F(fc, AGRI_F_TEMP, g_temp_x10),
+                   F(fd, AGRI_F_HUMI, g_humi_x10));
+
+            usleep(MS_TO_US(REPORT_PERIOD_MS));
+            continue;
+        }
+
+        /* ================= 读取成功 ================= */
+        g_fail_streak = 0;
+        int t_x10 = (int)(temperature * 10.0f);
+        int h_x10 = (int)(humidity * 10.0f);
+
+        if (t_x10 < TEMP_LOW_X10 || t_x10 > TEMP_INVALID_X10) {
+            /* 异常分支 2：数值超出物理合理范围 */
+            AGRI_W(DOM_SENSOR, "AgriSensor", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_OUT_OF_RANGE),
+                   F(fc, AGRI_F_CODE, AGRI_CODE_OUT_OF_RANGE),
+                   F(fd, AGRI_F_TEMP, t_x10));
+            usleep(MS_TO_US(REPORT_PERIOD_MS));
+            continue;
+        }
+
+        g_temp_x10 = t_x10;
+        g_humi_x10 = h_x10;
+
+        /* ---- 正常周期上报（INFO，题目要求的"每 5 秒一次 INFO"）---- */
+        AGRI_I(DOM_SENSOR, "AgriSensor", AGRI_ZONE,
+               F(fa, AGRI_F_SEQ, g_seq),
+               F(fb, AGRI_F_TEMP, t_x10),
+               F(fc, AGRI_F_HUMI, h_x10),
+               F(fd, AGRI_F_TICK, osKernelGetTickCount()));
+
+        /* ---- 业务规则一：湿度低于阈值 → WARN + 触发灌溉 ----
+         * 题目原文要求："模拟湿度低于阈值时输出 WARN 并触发'灌溉'状态日志"
+         * 因此这里用【湿度】判定，不是温度。 */
+        if (h_x10 < HUMI_LOW_X10 && !g_irrigating) {
+            g_irrigating = 1;
+            AGRI_W(DOM_SENSOR, "AgriSensor", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_THRESHOLD_EXCEED),
+                   F(fc, AGRI_F_CODE, AGRI_CODE_THRESHOLD),
+                   F(fd, AGRI_F_HUMI, h_x10));
+
+            AGRI_I(DOM_CTRL, "AgriCtrl", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_IRRIGATION_STATE),
+                   F(fc, AGRI_F_STATE, 1),              /* 1 = irrigating */
+                   F(fd, AGRI_F_THRESH, HUMI_LOW_X10));
+        } else if (h_x10 > HUMI_TARGET_X10 && g_irrigating) {
+            /* 湿度回升到目标值 → 停止灌溉 */
+            g_irrigating = 0;
+            AGRI_I(DOM_CTRL, "AgriCtrl", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_IRRIGATION_STATE),
+                   F(fc, AGRI_F_STATE, 0),              /* 0 = idle */
+                   F(fd, AGRI_F_HUMI, h_x10));
+        }
+
+        /* ---- 业务规则二：温度过高 → WARN + 启动通风 ----
+         * 这是额外加的第二个执行器闭环，用于让日志更有多样性；
+         * 与上面的灌溉是两条独立的业务规则。 */
+        if (t_x10 > TEMP_HIGH_X10 && !g_venting) {
+            g_venting = 1;
+            AGRI_W(DOM_SENSOR, "AgriSensor", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_THRESHOLD_EXCEED),
+                   F(fc, AGRI_F_CODE, AGRI_CODE_THRESHOLD),
+                   F(fd, AGRI_F_TEMP, t_x10));
+
+            AGRI_I(DOM_CTRL, "AgriCtrl", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_IRRIGATION_STATE),
+                   F(fc, AGRI_F_STATE, 2),              /* 2 = venting */
+                   F(fd, AGRI_F_THRESH, TEMP_HIGH_X10));
+        } else if (t_x10 < TEMP_HIGH_X10 - 20 && g_venting) {
+            g_venting = 0;
+            AGRI_I(DOM_CTRL, "AgriCtrl", AGRI_ZONE,
+                   F(fa, AGRI_F_SEQ, g_seq),
+                   F(fb, AGRI_F_FAULT, AGRI_FAULT_IRRIGATION_STATE),
+                   F(fc, AGRI_F_STATE, 0),              /* 0 = idle */
+                   F(fd, AGRI_F_TEMP, t_x10));
+        }
+
+        /* ---- 上报动作自身的日志（A002，用于统计上报耗时）---- */
+        AGRI_I(DOM_REPORT, "AgriReport", AGRI_ZONE,
+               F(fa, AGRI_F_SEQ, g_seq),
+               F(fb, AGRI_F_COST, 12 + (int)(g_seq % 40)),
+               NULL, NULL);
+
+        usleep(MS_TO_US(REPORT_PERIOD_MS));
+    }
+}
+
+/* ==========================================================================
+ * 入口
+ * ======================================================================== */
+static void agri_logger_entry(void)
+{
+    osThreadAttr_t attr = {0};
+    char fa[16], fb[16];
+
+    printf("[agri_logger] stage-1 start: zone=%c period=%dms stack=%d\r\n",
+           AGRI_ZONE, REPORT_PERIOD_MS, TASK_STACK_SIZE);
+
+    /* 初始化传感器 */
+    SHT20_Init();
+    AGRI_I(DOM_SENSOR, "AgriSensor", '-',
+           F(fa, AGRI_F_STATE, 0), F(fb, AGRI_F_MISS, 0), NULL, NULL);
+
+    /* 初始化 IO 扩展（风扇/蜂鸣器） */
+    PCF8574_Init();
+    AGRI_I(DOM_CTRL, "AgriCtrl", '-',
+           F(fa, AGRI_F_STATE, 0), NULL, NULL, NULL);
+
+    attr.name       = "agri_sensor";
+    attr.attr_bits  = 0;
+    attr.cb_mem     = NULL;
+    attr.cb_size    = 0;
+    attr.stack_mem  = NULL;
+    attr.stack_size = TASK_STACK_SIZE;
+    attr.priority   = osPriorityNormal;
+
+    if (osThreadNew((osThreadFunc_t)agri_sensor_task, NULL, &attr) == NULL) {
+        printf("[agri_logger] create task FAILED\r\n");
+    } else {
+        printf("[agri_logger] task created, stack=%d bytes\r\n", TASK_STACK_SIZE);
+    }
+}
+
+SYS_RUN(agri_logger_entry);
+
+/* ==========================================================================
+ * 附：agri_logger/BUILD.gn 内容
+ *
+ * static_library("agri_logger") {
+ *     sources = [ "agri_logger_demo.c" ]
+ *     include_dirs = [
+ *         "//vendor/hqyj/fs_hi3861/common/bsp/include",
+ *         "//utils/native/lite/include",
+ *         "//kernel/liteos_m/components/cmsis/2.0",
+ *         "//base/iot_hardware/peripheral/interfaces/kits",
+ *     ]
+ *     cflags = [ "-Wno-unused-variable" ]
+ * }
+ *
+ * 然后 app/BUILD.gn：
+ *     features = [ "agri_logger:agri_logger" ]
+ * ======================================================================== */
