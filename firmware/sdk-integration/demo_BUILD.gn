@@ -1,0 +1,57 @@
+# Copyright (c) 2023 Beijing HuaQing YuanJian Education Technology Co., Ltd
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#    http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License. 
+
+import("//build/lite/config/component/lite_component.gni") 
+lite_component("demo") { 
+  features = [ 
+    # ─────────────────────────────────────────────────────────────────────
+    # 本项目当前阶段：先让板子稳定吐日志（SHT20 温湿度，每 2 秒一次）
+    # ⚠️ 一次只启用【一个】demo：都打开会导致多个 SYS_RUN 同时跑，日志互相干扰
+    #
+    # 下一步（W3）：改为启用我们自己的 agri_logger（6 zone 多任务程序）
+    #   见 docs/04-firmware.md §2
+    # ─────────────────────────────────────────────────────────────────────
+    "base_06_i2c_sht20:base_sht20_example", 
+    # "base_01_key:base_key_example",                     # 按键 demo（几乎不打印日志）
+    # "base_02_i2c_pcf8574_fan:base_fan_example", 
+    # "base_03_i2c_pcf8574_buzzer:base_buzzer_example", 
+    # "base_04_i2c_pcf8574_led:base_led_example", 
+    # "base_05_i2c_aw2013:base_aw2013_example", 
+    # "base_07_i2c_ap3216c:base_ap3216c_example",         # 光强/接近/红外（真实光照数据源）
+    # "base_08_i2c_ssd1306:base_ssd1306_example", 
+    # "base_09_i2c_nfc:base_nfc_example", 
+    # "kernel_01_task:kernel_task_example", 
+    # "kernel_02_timer:kernel_timer_example", 
+    # "kernel_03_event:kernel_event_example", 
+    # "kernel_04_mutex:kernel_mutex_example", 
+    # "kernel_05_mutex_semaphore:kernel_mutex_semaphore_example", 
+    # "kernel_06_sync_semaphore:kernel_sync_semaphore_example", 
+    # "kernel_07_count_semaphore:kernel_count_semaphore_example", 
+    # "kernel_08_message_queue:kernel_message_queue_example", 
+    # "network_01_wifi_ap:network_wifi_ap_example", 
+    # "network_02_wifi_sta:network_wifi_sta_example", 
+    # "network_03_wifi_udp:network_wifi_udp_example", 
+    # "network_04_wifi_tcp:network_wifi_tcp_example", 
+    # "network_05_wifi_mqtt:network_wifi_mqtt_example", 
+    # "network_06_wifi_nfc_sta:network_wifi_nfc_example", 
+    # "cloud_01_HuaWei_IoTDA:cloud_huawei_iotda_example", 
+    # "test_board:test_board_example", 
+    # "smartTemp:smartTemp_demo", 
+    # "smartDistance:smartDistance_demo", 
+    # "ReversingRadar:ReversingRadar_demo", 
+    # "smartLamp:smartLamp_demo", 
+    # "smartFarm:smartFarm_demo", 
+    # "smartCar_uart_udp:smartCar_demo", 
+    # "smartSecurityDefense:smartSecurityDefense_demo" 
+  ] 
+} 
