@@ -57,6 +57,7 @@
 #include "hal_bsp_ap3216c.h"
 #include "hal_bsp_ssd1306.h"
 #include "hal_bsp_pcf8574.h"
+#include "hal_bsp_key.h"        /* 板载用户按键：KEY_Init / KEY_Get_Input_Value */
 #include "iot_errno.h"          /* IOT_SUCCESS（=0），AP3216C_ReadData 的返回值 */
 
 #include "log_def.h"
@@ -103,8 +104,21 @@
 #define HUMI_TARGET_X10     550      /* 55.0% → 停灌溉        */
 #define HEAP_LOW_THR        4096     /* 堆内存低水位（字节）   */
 
-/* 故障注入间隔（单位：轮）。见文件头【5】的说明。 */
-#define FAULT_INJECT_INTERVAL   3
+/* 故障注入间隔（单位：轮 = 一次上报）。
+ *
+ * 题目原文："正常情况下输出 INFO 级数据，【每 20~30 次上报后】，随机触发一次
+ *            '传感器超时'的 ERROR 日志" —— 所以正式跑用 20~30。
+ *
+ * 取值建议：
+ *   20~30  正式数据集 / 验收。符合题目要求，日志以 INFO 为主、故障是稀疏事件，
+ *          这样"异常识别"才有意义（满地都是 ERROR 就不叫异常了）。
+ *   2~3    现场演示 / 调试分析链路。故障密集，几分钟就能攒够异常窗口，
+ *          但【不要用它生成评测数据集】—— 违反题目要求，异常比例也失真。
+ *   0      纯正常样本（负样本集），用来测误报率。
+ *
+ * ⚠️ 改这个值不影响场景轮换 —— 轮换用独立计数器 g_scenario_turn，
+ *    不会像 g_cycle % 6 那样被间隔整除而只轮到少数场景。 */
+#define FAULT_INJECT_INTERVAL   20
 
 /* 健康检查间隔（单位：轮） */
 #define HEALTH_CHECK_EVERY      2
@@ -172,8 +186,36 @@ static osThreadId_t  g_task_id = NULL;
 /* 内存健康（用 SDK 真实接口获取） */
 static unsigned      g_heap_free_last = 0;
 static int           g_light_last = 0;      /* 最近一次真实光照读数（AP3216C ALS） */
+static unsigned      g_scenario_turn = 0;   /* 单设备模式下的故障场景轮换计数（每次注入 +1） */
 static unsigned      g_malloc_fail_last = 0;
 static unsigned      g_stack_space_last = 0;
+
+/* ==========================================================================
+ * 演示开关：板载 KEY 按键切换"故障注入"的开启/关闭
+ *
+ * 为什么要做这个：
+ *   演示脚本是"先展示一切正常，再展示遇到故障会怎么样"。
+ *   如果设备端没有开关，就只能靠重新烧录来切换 —— 现场根本来不及。
+ *
+ * ★ 这个开关的语义是【设备端真的不发】注入日志，不是让前端过滤掉。
+ *   区别很大：
+ *     · 设备端关闭 → 日志流里【根本不存在】注入的故障，"纯真实数据"是物理事实
+ *     · 前端过滤   → 设备照发，只是界面不显示；被问"设备到底报没报"就露馅
+ *   所以我们做的是前者。
+ *
+ * 按下后 OLED 第 1 行会立刻变成 FAULT:ON / FAULT:OFF，
+ * 并发一条 AgriMode 日志，看板也能读到当前模式。
+ *
+ * 按键用 BSP 官方的 hal_bsp_key（GPIO_14，上拉输入，低电平=按下）。
+ * ⚠️ 用了它就必须把 hal_bsp_key.c 加进 BUILD.gn 的 sources，
+ *    否则链接期报 undefined reference（AP3216C / SSD1306 都栽过这个坑）。
+ * ======================================================================== */
+#define KEY_POLL_MS         100                  /* 主循环里每 100ms 查一次按键 */
+
+static volatile int  g_inject_on = 0;       /* 0=纯真实数据（默认） 1=开启注入 */
+static int           g_key_stable = 1;      /* 去抖后的按键状态：1=松开 0=按下 */
+static int           g_key_same = 0;        /* 连续读到同一状态的次数 */
+static volatile int  g_mode_dirty = 1;      /* 模式变了要刷 OLED / 发日志 */
 
 /* ==========================================================================
  * 工具：字段缓冲
@@ -377,10 +419,49 @@ static void oled_update(int temp_x10, int humi_x10, int light, unsigned cycle)
     if (c > 9999u) {
         c = 9999u;                      /* 防止轮次号撑破行宽 */
     }
-    oled_draw_line(0, "AGRI-OPS #", (int)c, 0, "");
+    /* 第 1 行同时显示轮次和【当前是否在注入故障】——
+     * 演示时最怕的就是"到底开没开注入"说不清，屏幕上直接写着。 */
+    oled_draw_line(0, "#", (int)c, 0, g_inject_on ? " FAULT:ON" : " FAULT:OFF");
     oled_draw_line(1, "T: ", temp_x10, 1, " C");      /* 温度：30.7 C */
     oled_draw_line(2, "H: ", humi_x10, 1, " %");      /* 湿度：47.1 % */
     oled_draw_line(3, "L: ", light,    0, "");        /* 光照：真实 ALS 原始值 */
+}
+
+/* ==========================================================================
+ * 板载 KEY：切换故障注入开关
+ *
+ * 用【轮询 + 去抖】而不是中断，原因：
+ *   · 主循环本来就是 5 秒一轮，把等待切成 100ms 小段顺手就查了按键，
+ *     响应延迟 ≤100ms，演示时按下立刻有反应
+ *   · 中断回调在中断上下文里改状态容易出问题（本项目已经栽过够多坑了）
+ * ======================================================================== */
+static void key_setup(void)
+{
+    KEY_Init();          /* GPIO_14 上拉输入，官方 BSP 驱动 */
+}
+
+/** 每 100ms 调一次。检测到"按下"就把注入开关翻一次。 */
+static void key_poll(void)
+{
+    int now = (KEY_Get_Input_Value() == 0) ? 0 : 1;   /* 低电平 = 按下 */
+
+    if (now == g_key_stable) {
+        g_key_same = 0;
+        return;
+    }
+    if (++g_key_same < 2) {                     /* 连续 2 次(200ms)一致才认账 */
+        return;
+    }
+    g_key_same = 0;
+    g_key_stable = now;
+
+    if (now == 0) {                             /* 按下瞬间 */
+        g_inject_on = g_inject_on ? 0 : 1;
+        /* 打开时把倒计时清零，下一次循环立刻注一次故障 ——
+         * 否则按下后要等 20 轮(约 100 秒)才看到第一条，演示时以为没生效。 */
+        g_inject_countdown = 1;
+        g_mode_dirty = 1;                       /* 通知主循环刷屏 + 发日志 */
+    }
 }
 
 /**
@@ -590,7 +671,7 @@ static void agri_main_task(void)
      *   把频率打出来，一眼就能核对时间戳的单位对不对：
      *     tickfreq=100Hz 表示 1 tick = 10ms，日志里每秒应有 100 个 tick
      *   这比"盯着时间戳猜它是不是秒"可靠得多。 */
-    printf("[agri_logger] FW=v2.4 mode=");
+    printf("[agri_logger] FW=v2.7 mode=");
 #if SINGLE_DEVICE_MODE
     printf("single-device(真实传感器直通), period=5000ms, tickfreq=");
 #else
@@ -666,18 +747,41 @@ static void agri_main_task(void)
          * 所以"屏幕上看到的"和"日志里打出来的"必然一致，不会出现对不上的情况。 */
         oled_update(base_t, base_h, base_l, g_cycle);
 
-        /* ================= 2) 决定本轮是否注入故障 ================= */
+        /* ---- 模式切换了？立刻刷屏 + 发一条日志 ----
+         * 放在这里而不是按键回调里：按键是 100ms 级的，而日志要用到
+         * b1..b4 缓冲和 g_cycle，在主循环里发最省事也最安全。 */
+        if (g_mode_dirty) {
+            g_mode_dirty = 0;
+            oled_update(base_t, base_h, base_l, g_cycle);
+            AGRI_I(DOM_HEALTH, "AgriMode", '-',
+                   F(b1, AGRI_F_SEQ, g_cycle),
+                   F(b2, AGRI_F_STATE, g_inject_on ? 1 : 0),  /* 1=注入开 0=纯真实 */
+                   F(b3, AGRI_F_HEAP, (int)g_heap_free_last),
+                   NULL);
+        }
+
+        /* ================= 2) 决定本轮是否注入故障 =================
+         * ★ g_inject_on 关掉时，【倒计时都不减】，也就是一条注入日志都不会产生。
+         *   日志流里根本不存在那些故障，"纯真实数据"是物理事实而不是界面过滤。 */
         g_injecting_zone = -1;
 #if FAULT_INJECT_INTERVAL > 0
-        if (--g_inject_countdown <= 0) {
+        if (g_inject_on && --g_inject_countdown <= 0) {
             g_inject_countdown = FAULT_INJECT_INTERVAL;
             g_injecting_zone = (int)(g_cycle % ZONE_COUNT);   /* 轮流挑一个 zone */
 #if SINGLE_DEVICE_MODE
-            /* 单设备模式下只有一个 zone，如果场景固定就永远只出一种故障，
-             * 分析链路（跨模块因果关联、聚类）根本测不全。
-             * 让场景逐轮轮换，一份日志里六类故障都能出现。 */
-            g_zone[g_injecting_zone].scenario =
-                (scenario_t)(g_cycle % 6);
+            /* 单设备模式下只有一个 zone。如果场景固定，日志里就永远只有一类故障，
+             * 分析链路（跨模块因果关联、聚类）根本测不全，所以让场景逐轮轮换。
+             *
+             * ★ 必须用【独立的轮换计数器】，不能用 g_cycle % 6 ★
+             *   踩过的坑：写成 (scenario_t)(g_cycle % 6)，但注入本身是每
+             *   FAULT_INJECT_INTERVAL 轮才发生一次，取模只在"间隔的倍数"这个
+             *   子集上取值。实测间隔=3 时 g_cycle 永远是 3 的倍数，
+             *   g_cycle % 6 只能得到 0 和 3 —— 六个场景里【只有两个跑得到】，
+             *   看板上永远只有 F1001/F1004/F3005 三种故障码，而且数量几乎相等，
+             *   极难察觉是 bug。
+             *   用独立计数器每次注入 +1，才能真正轮完 6 个场景。 */
+            g_zone[g_injecting_zone].scenario = (scenario_t)(g_scenario_turn % 6u);
+            g_scenario_turn++;
 #endif
         }
 #endif
@@ -774,9 +878,17 @@ static void agri_main_task(void)
         }
 
         /* ================= 5) 等待下一轮 =================
+         * ★ 把 5 秒的等待切成 50 个 100ms 小段，每段查一次按键。
+         *   否则按一下 KEY 要等最多 5 秒才有反应，演示时会以为没生效。
+         *   用轮询而不是中断：主循环本来就要等，顺手查一下最简单，
+         *   也避免在中断上下文里改状态（这个项目已经栽过够多坑了）。
+         *
          * 用 usleep()（微秒，单位明确）而不是 osDelay()
          * （单位是 RTOS tick，换算关系不确定）。详见 docs/09 坑 4。 */
-        usleep(CYCLE_PERIOD_MS * 1000);
+        for (i = 0; i < CYCLE_PERIOD_MS / KEY_POLL_MS; i++) {
+            key_poll();
+            usleep(KEY_POLL_MS * 1000);
+        }
     }
 }
 
@@ -805,6 +917,11 @@ static void agri_logger_entry(void)
     /* OLED：脱机也能看到实时读数。注意顺序 —— 官方 demo 是先 PCF8574 后 SSD1306。
      * 初始化失败不影响主流程，只是不刷屏（g_oled_ok=0）。 */
     oled_setup();
+
+    /* 板载 KEY：运行时切换"故障注入"的开关。
+     * 默认【关闭】—— 开机就是纯真实数据，演示时先给评委看干净状态，
+     * 按一下 KEY 才开始注入故障。见 key_poll() 的说明。 */
+    key_setup();
 
     attr.name       = "agri_main";
     attr.attr_bits  = 0;

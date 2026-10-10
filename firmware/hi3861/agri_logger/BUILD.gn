@@ -28,7 +28,10 @@ static_library("agri_logger") {
         # ★ SSD1306（板载 0.96" OLED，显示实时温湿度光照）同样必须显式列出。
         #   只需这一个 .c —— 位图字库 hal_bsp_ssd1306_bmps.c 是给 SSD1306_DrawBMP
         #   用的，我们只显示字符串，不需要（官方 base_08_i2c_ssd1306/BUILD.gn 也只列这一个）。
-        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_ssd1306.c"
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_ssd1306.c",
+        # ★ 板载用户按键（GPIO_14）：运行时切换故障注入开关。
+        #   同上，用了就必须在这里点名，否则链接期 undefined reference to `KEY_Init'。
+        "//vendor/hqyj/fs_hi3861/common/bsp/src/hal_bsp_key.c"
     ]
 
     include_dirs = [

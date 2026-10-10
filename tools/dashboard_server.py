@@ -144,6 +144,26 @@ class DataStore:
         self._build_timeline()
         self._build_zone_curves()
 
+    def device_mode(self) -> dict:
+        """读设备当前的运行模式 —— 来自固件发的 AgriMode 日志行。
+
+        为什么要在看板上显示：演示时最怕"到底开没开故障注入"说不清。
+        设备端把它写进日志、OLED 上也显示，看板再显示一次，三处一致。
+        按键切换后设备会立刻补发一条 AgriMode，所以看板 3 秒内就能跟上。
+        """
+        for r in reversed(self.records):
+            if r.tag == "AgriMode":
+                v = r.values.get(11)
+                if v is None:
+                    continue
+                return {
+                    "known": True,
+                    "injecting": (v == 1),
+                    "label": "故障注入中" if v == 1 else "纯真实数据",
+                    "ts": r.ts_device,
+                }
+        return {"known": False, "injecting": None, "label": "未知（固件未上报）"}
+
     def families(self, zone: str = "") -> list:
         """把异常窗口按【聚合指纹】聚成异常族 —— 这就是"智能聚合"的可见结果。
 
@@ -911,6 +931,7 @@ class Handler(BaseHTTPRequestHandler):
                 m["windows"] = zv["meta"]["windows"]
                 m["anomaly_windows"] = zv["meta"]["anomaly_windows"]
                 m["duration_s"] = zv["meta"]["duration_s"]
+                m["device_mode"] = STORE.device_mode()
                 return self._json(m)
             if path == "/api/live/status":
                 return self._json(STORE.live_status())

@@ -107,6 +107,17 @@ body::after{
 .modechip.live  {color:var(--phosphor); border-color:rgba(60,230,139,.34); background:rgba(60,230,139,.06)}
 .modechip.offline{color:var(--crimson); border-color:rgba(255,77,77,.42); background:rgba(255,77,77,.07)}
 
+/* 设备端模式徽标：纯真实数据（绿） / 故障注入中（琥珀，闪一下提示） */
+.devmode{
+  display:flex; align-items:center; gap:6px; margin-left:6px;
+  font-size:10px; letter-spacing:.14em; padding:3px 9px;
+  border:1px solid var(--line); color:var(--ink-faint); white-space:nowrap;
+}
+.devmode.real{color:var(--phosphor); border-color:rgba(60,230,139,.4); background:rgba(60,230,139,.07)}
+.devmode.inject{color:var(--amber); border-color:rgba(255,176,46,.45); background:rgba(255,176,46,.08)}
+.devmode.inject #devModeTxt::before{content:"⚡ "}
+.devmode.real   #devModeTxt::before{content:"✔ "}
+
 /* 设备选择器：切换后整块看板换视角 */
 .devsel{
   display:flex; align-items:center; gap:6px; margin-left:10px;
@@ -390,6 +401,11 @@ canvas{display:block; width:100%}
       <div class="sub">OpenHarmony 温室集群 · 日志智能聚合分析</div>
     </div>
     <div class="live" id="modeBadge"><span class="dot"></span><span id="srcName">SOURCE</span></div>
+    <!-- 设备端模式：读固件发的 AgriMode 日志。演示时"到底开没开注入"必须三处一致：
+         板载 OLED 显示、日志里有 AgriMode 行、看板这里也显示 -->
+    <div class="devmode" id="devMode" title="设备端当前的运行模式（来自固件的 AgriMode 日志）。按板子上的 KEY 按键切换。">
+      <span id="devModeTxt">设备模式 –</span>
+    </div>
     <!-- 设备选择器：整块看板聚焦到一个棚（真实运维的视角） -->
     <div class="devsel" title="选择要分析的设备。选中某个棚后，窗口/时间线/异常族/报告都只由这个棚的日志算出，异常判定不会被别的棚的正常日志摊薄。">
       <span class="lb">设备</span>
@@ -615,7 +631,8 @@ function md2html(md){
         '回放中 · 循环播放 ' + meta.log_path.split('/').pop() + ' —— 与开发板是否通电/连接【无关】');
     }
 
-    $('#kLines').textContent = meta.records.toLocaleString();
+    renderDeviceMode(meta.device_mode);
+      $('#kLines').textContent = meta.records.toLocaleString();
     $('#kParse').innerHTML = meta.parse_rate + '<span class="u">%</span>';
     $('#kDur').textContent = fmtDur(meta.duration_s);
     $('#kAnom').textContent = meta.anomaly_windows + ' / ' + meta.windows;
@@ -719,6 +736,7 @@ function startLive(){
         api(ZQ('/api/meta')), api(ZQ('/api/summary')), api(ZQ('/api/timeline')),
         api(ZQ('/api/zones')), api(ZQ('/api/families'))
       ]);
+      renderDeviceMode(meta.device_mode);
       $('#kLines').textContent = meta.records.toLocaleString();
       $('#kParse').innerHTML = meta.parse_rate + '<span class="u">%</span>';
       $('#kDur').textContent = fmtDur(meta.duration_s);
@@ -947,6 +965,25 @@ $('#fQ').oninput = e=>{
 };
 $('#btnClr').onclick = resetStream;
 
+/* 设备端模式：读 /api/meta 的 device_mode（来自固件 AgriMode 日志） */
+function renderDeviceMode(dm){
+  const box = $('#devMode');
+  if(!box || !dm) return;
+  if(!dm.known){
+    box.className = 'devmode';
+    $('#devModeTxt').textContent = '设备模式 未知';
+    return;
+  }
+  box.className = 'devmode ' + (dm.injecting ? 'inject' : 'real');
+  $('#devModeTxt').textContent = '设备模式 ' + dm.label;
+  box.title = dm.injecting
+    ? '设备端【正在注入故障】—— 日志里的 F1001/F1004/F3005 等是主动注入的，\n'
+      + '用来验证分析链路。按板子上的 KEY 按键可切回"纯真实数据"。\n'
+      + '注入的故障带设备号 z=A，真实硬件故障是 z=-。'
+    : '设备端【纯真实数据】—— 只有真实传感器读数（SHT20 温湿度 + AP3216C 光照），\n'
+      + '没有任何注入的故障日志。按板子上的 KEY 按键可开启故障注入。';
+}
+
 /* 距今多久：报告列表上直接显示"3 分钟前"，一眼看出新旧 */
 function fmtAge(s){
   if(s == null) return '';
@@ -1097,6 +1134,7 @@ async function applyZone(zone){
         api(ZQ('/api/meta')), api(ZQ('/api/summary')), api(ZQ('/api/timeline')),
         api(ZQ('/api/zones')), api(ZQ('/api/families'))
       ]);
+      renderDeviceMode(meta.device_mode);
       $('#kLines').textContent = meta.records.toLocaleString();
       $('#kDur').textContent = fmtDur(meta.duration_s);
       $('#kAnom').textContent = meta.anomaly_windows + ' / ' + meta.windows;
