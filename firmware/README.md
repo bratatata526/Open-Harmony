@@ -13,8 +13,8 @@
 | 文件 | 说明 |
 |---|---|
 | `agri_logger/log_def.h` | **日志规范实现** —— 全项目唯一的日志出口。字段宏、故障码表、自写十进制转换 |
-| `agri_logger/agri_logger_multi.c` | **主固件**。单设备模式 + 六棚逻辑设备模式（`SINGLE_DEVICE_MODE` 开关）、故障注入器、OLED 显示、健康检查 |
-| `agri_logger/BUILD.gn` | 编译配置。**注意 sources 里必须列出用到的所有 BSP 驱动**，否则链接期报 `undefined reference` |
+| `agri_logger/agri_logger_multi.c` | **主固件**。单设备模式 + 六棚逻辑设备模式（`SINGLE_DEVICE_MODE` 开关）、故障注入器 + **板载 KEY 按键运行时开关**、OLED 显示、健康检查 |
+| `agri_logger/BUILD.gn` | 编译配置。**sources 里必须列出用到的全部 BSP 驱动**，否则链接期报 `undefined reference`。当前用了 5 个：`pcf8574` / `sht20` / `ap3216c` / `ssd1306` / `key` |
 | `agri_logger/agri_logger_demo.c.reference` | 阶段 1 的单设备参考实现，不参与编译，仅作对照 |
 | `sdk-integration/app_BUILD.gn` | 需要替换 SDK 里的 `app/BUILD.gn`（它决定编译哪个 app） |
 | `sdk-integration/demo_BUILD.gn` | 需要替换 SDK 里的 `vendor/hqyj/fs_hi3861/demo/BUILD.gn`（官方 demo 只留 sht20） |
@@ -126,17 +126,42 @@ I A003 AgriSelfCheck: 1 0 5 1001 8 20480 15 -355 z=-
 
 **切换模式后记得把开机横幅的 `FW=` 号 +1**，否则无法判断板上跑的是哪一版。
 
+### 故障注入的运行时开关（板载 KEY 按键）
+
+注入**默认关闭** —— 开机就是纯真实数据。按一下板子上的 **KEY 按键**（GPIO_14）才开启。
+
+| 按键 | 设备行为 | OLED 第 1 行 |
+|---|---|---|
+| 开机默认 | **纯真实数据**，一条注入日志都不发 | `#123 FAULT:OFF` |
+| 按一下 | 开始注入故障（立刻注一次，之后每 `FAULT_INJECT_INTERVAL` 轮一次） | `#123 FAULT:ON` |
+| 再按一下 | 切回纯真实数据 | `#123 FAULT:OFF` |
+
+**为什么做在设备端而不是前端**：关掉时设备端**连倒计时都不减**，
+日志流里【根本不存在】注入的故障，所以"纯真实数据"是**物理事实**，
+不是让界面过滤出来的。前端过滤只是视觉上干净，被问"设备到底报没报"就露馅。
+
+按键响应 ≤100ms（主循环的 5 秒等待切成 50×100ms 轮询）。
+
+演示流程建议：**开机先展示干净状态 → 按 KEY → 展示故障识别与根因报告**。
+
+> ⚠️ 注入的故障带设备号（`z=A`），**真实硬件故障是 `z=-`**，日志里可以区分。
+> 环境数据（温湿度/光照）全部来自真实传感器，这一点必须对外说清楚。
+
 ---
 
 ## 四、改完代码务必同步存档
 
-固件源码在仓库里有两份：**SDK 部署目录**（会被编译）和 **`firmware/` 存档**。
-手工 `copy` 很容易把方向搞反、把改动覆盖掉（本项目出过这个事故），所以用脚本：
+固件源码在仓库里有两份：
+**`firmware/` 存档**（git 跟踪，**改代码改这里**）和 **SDK 部署目录**（编译器只认这份，但不入 git）。
 
 ```powershell
-python tools/sync_firmware.py          # SDK → firmware，并核对哈希
-python tools/sync_firmware.py --check  # 只核对
+python tools/sync_firmware.py          # firmware → SDK，部署并核对哈希
+python tools/sync_firmware.py --check  # 只核对两边是否一致
 ```
+
+> ⚠️ **方向不能搞反**。这个脚本最初把默认方向写成了 SDK → firmware，
+> 结果跑一次就把 `firmware/` 里刚改好的代码覆盖回旧版 —— 正是脚本本该防止的错误。
+> 现在方向固定为 `firmware → SDK`，要反向必须显式加 `--from-sdk`。
 
 ---
 
