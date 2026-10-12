@@ -97,6 +97,9 @@ class DataStore:
         self._live_proc = None          # 实时数据源子进程（退出时要收尸）
         self._live_stop = False         # 通知看护循环退出
         self._live_gen = 0              # generation：强制重连时让旧线程自动退出
+        # 数据流世代号：records 被清空/重启就 +1。
+        # 前端靠它判断"我手里的游标还算不算数"，避免重启后出现重复日志。
+        self._live_epoch = 0
         self._live_thread = None
         self._live_port = ""
         self._live_baud = 115200
@@ -417,8 +420,11 @@ class DataStore:
         """
         # ★ 清空启动时读入的静态记录：实时模式就只显示实时数据，
         #   否则会把"基底回放"和"实时新增"混在一起，反而更让人困惑。
+        #   ★ records 一清空，世代号必须 +1 —— 前端靠它知道"你的游标作废了"，
+        #     否则游标倒退会导致日志重复显示（见 live_logs 的说明）。
         with self.lock:
             self.records = []
+            self._live_epoch += 1
         self.parser = LogParser()           # 重置解析统计，只统计实时数据
 
         self.live = {
@@ -682,16 +688,34 @@ class DataStore:
                 self.meta["duration_s"] = round(max(ts) - min(ts), 1)
 
     def live_logs(self, since: int) -> dict:
-        """只返回 since 之后新增的记录（增量拉取，避免整表重传）"""
+        """只返回 since 之后新增的记录（增量拉取，避免整表重传）。
+
+        ★ 必须带回 epoch（数据流世代）并处理"游标倒退"。
+          踩过的坑：看板重启后 records 数组清空、从 0 重新计数，
+          而前端手里还攥着重启前的游标（比如 53）。
+          这时 records[53:] 是空的，但返回的 next 只有 10 —— 比 53 小。
+          前端老实地把游标改成 10，等 records 再涨过 53，
+          就会把【已经显示过的行再发一遍】，界面上出现重复日志。
+          所以这里主动告诉客户端：世代变了 / 你的游标超前了，请重置。
+        """
         with self.lock:
+            n = len(self.records)
+            if since > n:
+                # 客户端游标比现有数据还大 → 它经历了一次重启，必须重置
+                return {"next": 0, "online": self.live_status().get("online", False),
+                        "error": self.live_status().get("error", ""),
+                        "silent_s": self.live_status().get("silent_s", 0.0),
+                        "epoch": self._live_epoch, "reset": True, "items": []}
             new = self.records[since:]
-            start = len(self.records)
+            start = n
         st = self.live_status()
         return {
             "next": start,
             "online": st.get("online", False),
             "error": st.get("error", ""),
             "silent_s": st.get("silent_s", 0.0),
+            "epoch": self._live_epoch,      # 世代号：变了说明数据源重启过
+            "reset": False,
             "items": [{
                 "eid": r.evidence_id, "ts": r.ts_device, "level": r.level,
                 "domain": r.domain, "tag": r.tag, "zone": r.zone, "seq": r.seq,

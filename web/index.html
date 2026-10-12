@@ -626,7 +626,7 @@ const api = async (p)=>{ const r = await fetch(p); if(!r.ok) throw new Error(r.s
 const COLOR = {I:'#3ce68b', W:'#ffb02e', E:'#ff4d4d', F:'#ff4d4d', D:'#6f8a82'};
 const state = { records:[], playing:false, timer:null, cursor:0,
                 filter:{level:'',zone:'',tag:'',q:''},
-                mode:'replay', liveCursor:0, liveTimer:null,
+                mode:'replay', liveCursor:0, liveTimer:null, liveEpoch:0,
                 liveSource:'', isSim:false, panelTimer:null,
                 zone:'',            /* ← 当前聚焦的设备（'' = 全部） */
                 repSrc:'live',      /* ← 报告来源范围：live 只看真机 / all 含模拟 */
@@ -802,6 +802,28 @@ function startLive(){
   const poll = async ()=>{
     try{
       const d = await api('/api/live/logs?since=' + state.liveCursor);
+
+      /* ★ 处理"数据流重启"与"游标倒退"，否则会重复显示已看过的日志。
+         看板重启后 records 从 0 重新计数，而前端还攥着重启前的游标；
+         按旧游标取不到数据、返回的 next 反而更小，前端老实照做就会
+         在 records 涨回来之后把老日志再发一遍 —— 界面上就是一堆重复行。 */
+      if(d.reset || (d.epoch !== undefined && d.epoch !== state.liveEpoch)){
+        state.liveEpoch = d.epoch;
+        state.liveCursor = 0;
+        stream.innerHTML = '';
+        lastErr = '';
+        stream.insertAdjacentHTML('beforeend',
+          `<div class="logline" style="color:var(--amber);border-left-color:var(--amber)">
+             <span class="t">${'------.------'}</span><span class="lv W">RESET</span>
+             <span class="tag">数据流已重启（看板重连或换了数据源），日志流已清空重来</span></div>`);
+      }else if(d.epoch !== undefined){
+        state.liveEpoch = d.epoch;
+      }
+      if(typeof d.next === 'number' && d.next < state.liveCursor){
+        /* 双保险：不管后端有没有给 reset 标记，游标倒退了就重置 */
+        state.liveCursor = 0;
+        stream.innerHTML = '';
+      }
       state.liveCursor = d.next;
 
       const badge = $('#modeBadge');
