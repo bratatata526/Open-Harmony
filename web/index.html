@@ -185,11 +185,36 @@ body::after{
     "fams    stream    reports";
 }
 
-/* 拖拽条：绝对定位覆盖在网格间隙上，平时透明，悬停/拖动时才显形 */
-.splitter{position:absolute; z-index:30; background:transparent; transition:background .12s}
-.splitter:hover,.splitter.drag{background:rgba(60,230,139,.55)}
+/* 拖拽条：绝对定位覆盖在网格间隙上。
+   ★ 高亮做成【1 条 2px 细线】而不是整块色带 ——
+     原来悬停时整条 11px 宽的区域全部变绿，看着像一条横穿屏幕的横幅，
+     很容易被误认为渲染错误。现在只有中间一条细线亮起，指向明确又不抢眼。 */
+.splitter{position:absolute; z-index:30; background:transparent}
+.splitter::after{
+  content:''; position:absolute; background:transparent;
+  transition:background .12s, box-shadow .12s;
+}
+.splitter.v::after{left:50%; top:0; width:2px; height:100%; margin-left:-1px}
+.splitter.h::after{top:50%; left:0; height:2px; width:100%; margin-top:-1px}
+.splitter:hover::after,.splitter.drag::after{
+  background:var(--phosphor); box-shadow:0 0 6px rgba(60,230,139,.75);
+}
+/* 拖动中给个抓手光标，并且提示"正在改布局" */
+.splitter.drag{cursor:inherit}
+
+/* 拖拽热区尺寸（透明，只负责接鼠标事件） */
 .splitter.v{width:11px; margin-left:-5px; cursor:col-resize}
 .splitter.h{height:11px; margin-top:-5px; cursor:row-resize}
+
+/* 布局被改过时，标题栏右侧给一个显眼的"已自定义"提示 + 重置入口 */
+.layouthint{
+  display:none; align-items:center; gap:6px; margin-left:10px;
+  font-size:10px; letter-spacing:.1em; color:var(--amber);
+  border:1px solid rgba(255,176,46,.4); background:rgba(255,176,46,.07);
+  padding:2px 8px; cursor:pointer;
+}
+.layouthint.on{display:flex}
+.layouthint:hover{background:rgba(255,176,46,.16)}
 /* 拖动时禁止选中文字，否则会拖出一片蓝色选区；canvas 也要禁掉 pointer-events */
 body.resizing{user-select:none}
 body.resizing canvas{pointer-events:none}
@@ -456,6 +481,10 @@ canvas{display:block; width:100%}
          板载 OLED 显示、日志里有 AgriMode 行、看板这里也显示 -->
     <div class="devmode" id="devMode" title="设备端当前的运行模式（来自固件的 AgriMode 日志）。按板子上的 KEY 按键切换。">
       <span id="devModeTxt">设备模式 –</span>
+    </div>
+    <!-- 布局被拖动过才出现：点它或按 Ctrl+Alt+R 一键还原 -->
+    <div class="layouthint" id="layoutHint" title="面板大小被拖动过了。点击还原默认布局（快捷键 Ctrl+Alt+R）">
+      <span>布局已自定义 ↺ 还原</span>
     </div>
     <!-- 设备选择器：整块看板聚焦到一个棚（真实运维的视角） -->
     <div class="devsel" title="选择要分析的设备。选中某个棚后，窗口/时间线/异常族/报告都只由这个棚的日志算出，异常判定不会被别的棚的正常日志摊薄。">
@@ -1145,12 +1174,63 @@ function drawBigChart(){
    网格有媒体查询、面板可能 display:none，写死坐标一定会错位。
    拖动只改 .grid 上的 CSS 变量，浏览器自己重排。
    ═══════════════════════════════════════════════════════════════════ */
-const GRID_LIMITS = {
+const LAYOUT_DEFAULT = { gc1:'268px', gc3:'400px', gr1:'170px', gr2:'150px' };
+const LAYOUT_LIMITS = {
   gc1: [170, 460],    /* 左列宽 */
   gc3: [240, 760],    /* 右列宽 */
   gr1: [110, 420],    /* 第一行高 */
   gr2: [ 90, 420],    /* 第二行高 */
 };
+const LAYOUT_KEY = 'agri.layout';
+
+/** 读回上次保存的布局（刷新页面后不会跳回默认） */
+function loadLayout(){
+  const grid = $('#grid'); if(!grid) return;
+  let saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); }catch(e){}
+  if(saved){
+    Object.keys(LAYOUT_DEFAULT).forEach(k=>{
+      const v = parseFloat(saved[k]);
+      const lim = LAYOUT_LIMITS[k];
+      if(isFinite(v) && v >= lim[0] && v <= lim[1]) grid.style.setProperty('--'+k, v+'px');
+    });
+  }
+  updateLayoutHint();
+}
+
+function saveLayout(){
+  const grid = $('#grid'); if(!grid) return;
+  const cs = getComputedStyle(grid);
+  const o = {};
+  Object.keys(LAYOUT_DEFAULT).forEach(k=>{ o[k] = cs.getPropertyValue('--'+k).trim(); });
+  try{ localStorage.setItem(LAYOUT_KEY, JSON.stringify(o)); }catch(e){}
+}
+
+/** 布局是否偏离默认值 —— 偏离才显示"已自定义"提示 */
+function isLayoutCustomized(){
+  const grid = $('#grid'); if(!grid) return false;
+  const cs = getComputedStyle(grid);
+  return Object.keys(LAYOUT_DEFAULT).some(k=>{
+    const cur = parseFloat(cs.getPropertyValue('--'+k));
+    const def = parseFloat(LAYOUT_DEFAULT[k]);
+    return isFinite(cur) && Math.abs(cur - def) > 2;
+  });
+}
+function updateLayoutHint(){
+  const h = $('#layoutHint'); if(!h) return;
+  h.classList.toggle('on', isLayoutCustomized());
+}
+
+/** ★ 一键还原布局：Ctrl+Alt+R，或点标题栏的"已自定义"提示 */
+function resetLayout(){
+  const grid = $('#grid'); if(!grid) return;
+  Object.keys(LAYOUT_DEFAULT).forEach(k=>grid.style.setProperty('--'+k, LAYOUT_DEFAULT[k]));
+  try{ localStorage.removeItem(LAYOUT_KEY); }catch(e){}
+  requestAnimationFrame(()=>{
+    layoutSplitters(); relayoutZones();
+    updateLayoutHint();
+  });
+}
 
 function layoutSplitters(){
   const grid = $('#grid'); if(!grid) return;
@@ -1158,7 +1238,7 @@ function layoutSplitters(){
   const gr = grid.getBoundingClientRect();
   const q = s => grid.querySelector(s);
   const faults = q('.faults'), timeline = q('.timeline'),
-        zones = q('.zones'),  stream = q('.stream'), fams = q('.fams');
+        zones = q('.zones'),  stream = q('.stream');
   if(!faults || !timeline || !faults.offsetParent) return;   /* 小屏时面板可能被隐藏 */
 
   const fr = faults.getBoundingClientRect();
@@ -1187,21 +1267,24 @@ function layoutSplitters(){
   const grid = $('#grid'); if(!grid) return;
   let dragging = null;
 
+  const endDrag = ()=>{
+    if(!dragging) return;
+    dragging.sp.classList.remove('drag');
+    document.body.classList.remove('resizing');
+    dragging = null;
+    saveLayout();
+    updateLayoutHint();
+    setTimeout(()=>{ layoutSplitters(); relayoutZones(); relayout(); }, 60);
+  };
+
   grid.querySelectorAll('.splitter').forEach(sp=>{
     sp.addEventListener('mousedown', e=>{
       e.preventDefault();
-      dragging = { sp, key: sp.dataset.k, start: 0 };
-      const gr = grid.getBoundingClientRect();
       const cs = getComputedStyle(grid);
-      if(dragging.key === 'gc1') dragging.base = parseFloat(cs.getPropertyValue('--gc1'));
-      if(dragging.key === 'gc3') dragging.base = parseFloat(cs.getPropertyValue('--gc3'));
-      if(dragging.key === 'gr1') dragging.base = parseFloat(cs.getPropertyValue('--gr1'));
-      if(dragging.key === 'gr2') dragging.base = parseFloat(cs.getPropertyValue('--gr2'));
-      dragging.sign = (dragging.key === 'gc3') ? -1 : 1;   /* 右列是从右边量的 */
-      dragging.start = (dragging.key[1] === 'c') ? e.clientX : e.clientY;
-      dragging.grid0 = (dragging.key[1] === 'c') ? gr.left : gr.top;
-      dragging.abs0 = dragging.base + (dragging.key==='gc1' ? 0
-                      : dragging.key==='gc3' ? (gr.width - dragging.base) : 0);
+      dragging = { sp, key: sp.dataset.k, base: parseFloat(cs.getPropertyValue('--'+sp.dataset.k)) };
+      const gr = grid.getBoundingClientRect();
+      dragging.isCol = sp.dataset.k[1] === 'c';
+      dragging.grid0 = dragging.isCol ? gr.left : gr.top;
       sp.classList.add('drag');
       document.body.classList.add('resizing');
     });
@@ -1209,38 +1292,45 @@ function layoutSplitters(){
 
   window.addEventListener('mousemove', e=>{
     if(!dragging) return;
-    const isCol = dragging.key[1] === 'c';
-    const lim = GRID_LIMITS[dragging.key];
+    const grid2 = grid.getBoundingClientRect();
+    const cs = getComputedStyle(grid);
+    const k = dragging.key, lim = LAYOUT_LIMITS[k];
     let v;
-    if(dragging.key === 'gc1'){
-      v = e.clientX - dragging.grid0;
-    }else if(dragging.key === 'gc3'){
-      const gr = grid.getBoundingClientRect();
-      v = gr.right - e.clientX;
-    }else if(dragging.key === 'gr1'){
-      v = e.clientY - dragging.grid0;
-    }else{
-      const gr = grid.getBoundingClientRect();
-      const g1 = parseFloat(getComputedStyle(grid).getPropertyValue('--gr1'));
-      v = e.clientY - dragging.grid0 - g1 - 10;   /* 10 = gap */
+    if(k === 'gc1')       v = e.clientX - grid2.left;
+    else if(k === 'gc3')  v = grid2.right - e.clientX;
+    else if(k === 'gr1')  v = e.clientY - grid2.top;
+    else {                /* gr2：要减掉第一行高和中间的 gap(10) */
+      v = e.clientY - grid2.top - parseFloat(cs.getPropertyValue('--gr1')) - 10;
     }
     v = Math.max(lim[0], Math.min(lim[1], v));
-    grid.style.setProperty('--' + dragging.key, v + 'px');
+    grid.style.setProperty('--' + k, v + 'px');
     layoutSplitters();
     relayoutZones();
   });
 
-  window.addEventListener('mouseup', ()=>{
-    if(!dragging) return;
-    dragging.sp.classList.remove('drag');
-    document.body.classList.remove('resizing');
-    dragging = null;
-    /* 布局稳定后再重绘一次，避免拖拽过程中曲线拉到一半 */
-    setTimeout(()=>{ layoutSplitters(); relayoutZones(); relayout(); }, 60);
+  window.addEventListener('mouseup', endDrag);
+  /* ★ 拖动中鼠标移出窗口 / 切走标签页时收不到 mouseup，
+     高亮和 dragging 状态会【卡住不消失】—— 这就是那条绿线一直挂着的可能原因。
+     补上 blur 和 visibilitychange 兜底。 */
+  window.addEventListener('blur', endDrag);
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden) endDrag(); });
+  /* 鼠标离开窗口时也把高亮清掉 */
+  document.addEventListener('mouseleave', ()=>{
+    if(!dragging) grid.querySelectorAll('.splitter.drag').forEach(s=>s.classList.remove('drag'));
   });
 
-  /* 首屏 + 尺寸变化时重新定位拖拽条 */
-  const reposition = ()=>{ layoutSplitters(); };
+  /* ★ Ctrl+Alt+R 一键还原布局 */
+  document.addEventListener('keydown', e=>{
+    if(e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')){
+      e.preventDefault();
+      resetLayout();
+    }
+  });
+  /* 标题栏那个"已自定义"提示也可以点 */
+  const lh = $('#layoutHint'); if(lh) lh.onclick = resetLayout;
+
+  loadLayout();
+  const reposition = ()=> layoutSplitters();
   window.addEventListener('resize', reposition);
   setTimeout(reposition, 60);
   setTimeout(reposition, 400);
