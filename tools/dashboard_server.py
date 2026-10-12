@@ -787,7 +787,16 @@ class DataStore:
             log("窗口 %d 个，异常窗口 %d 个" % (len(windows), len(anomalies)))
 
             if not anomalies:
-                log("该范围内没有异常窗口，无需生成报告")
+                # ★ 没有异常也要出报告！
+                #   踩过的坑：原代码在这里直接 return，用户点了"生成根因报告"
+                #   结果一份文件都没有，看起来像功能坏了。
+                #   而且"这段时间一切正常"本身就是有价值的结论：
+                #   它是一次阴性样本记录，说明监测系统在跑、且没有误报。
+                log("未发现异常窗口 —— 生成【系统健康报告】（而不是什么都不出）")
+                fn = self._write_health_report(zv, records, windows, log)
+                if fn:
+                    st["reports"].append(fn)
+                    log("已生成 %s" % fn)
                 st["done"] = True
                 return
 
@@ -859,6 +868,117 @@ class DataStore:
         finally:
             st["running"] = False
             st["finished"] = time.time()
+
+    def _write_health_report(self, zv, records, windows, log) -> Optional[str]:
+        """没有任何异常窗口时，生成一份【系统健康报告】。
+
+        为什么必须有这份东西：
+          · 用户点了"生成根因报告"，一份文件都不出，看起来像功能坏了
+          · "这段时间一切正常"本身就是有价值的结论 —— 它是一条【阴性样本】，
+            证明监测系统确实在跑、而且没有误报
+          · 答辩时也更有说服力："我们的系统在正常时段输出的是健康报告，
+            不是空白"
+
+        这份报告【不调用 LLM】—— 没有异常就没有根因可推，
+        为了"有产出"去调模型纯属浪费，还容易诱导模型编造问题。
+        """
+        from agri_logger.parser import fields as F
+
+        LIVE_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        meta = zv["meta"]
+        lv = Counter(r.level for r in records)
+        faults = Counter(r.fault_tag for r in records if r.fault_tag)
+        zones = Counter(r.zone for r in records if r.zone and r.zone != "-")
+
+        # 数据来源说明：真机串口 还是 文件
+        if self.live.get("enabled"):
+            src = "真机实时串口 %s（%s）" % (self.live.get("source", "?"), meta["zone_name"])
+        else:
+            src = self.meta.get("log_path", "")
+
+        # 时间跨度
+        ts = [r.ts_device for r in records if r.ts_device is not None]
+        span = "%.1f 秒" % (max(ts) - min(ts)) if ts else "（未知）"
+
+        # 分等级
+        lv_line = " ｜ ".join("%s=%d" % (k, lv.get(k, 0)) for k in ("D", "I", "W", "E", "F"))
+
+        # 故障码：有的话列出来，没有就写"无"
+        if faults:
+            fault_rows = "\n".join(
+                "| `%s` | %s | %d |%s |" % (
+                    t, F.fault_name(int(t[1:])), c,
+                    " 是（正常事件，不计入异常）" if F.is_normal_event(int(t[1:])) else " 否")
+                for t, c in faults.most_common())
+            fault_block = ("| 故障码 | 名称 | 次数 | 正常事件 |\n|---|---|---|---|\n"
+                           + fault_rows)
+        else:
+            fault_block = "**本次范围内没有出现任何故障码。**"
+
+        dev = self.device_mode()
+        mode_line = dev["label"] if dev.get("known") else "未知（固件未上报 AgriMode）"
+
+        md = f"""# 系统健康报告 —— 未发现异常
+
+| 项目 | 值 |
+|---|---|
+| **生成时间** | **{now}**（本地时间） |
+| 数据来源 | {src} |
+| 分析范围 | {meta['zone_name']} |
+| 设备当前模式 | **{mode_line}** |
+| 记录数 | {len(records)} 行 |
+| 时间跨度 | {span} |
+| 窗口数 | {len(windows)} 个（窗口长度 {self.window_s:.0f} 秒） |
+| **异常窗口** | **0 个**（判定阈值 {self.threshold}） |
+| 级别分布 | {lv_line} |
+| 涉及设备 | {'、'.join(sorted(zones)) if zones else '（无设备维度）'} |
+
+## 一、结论
+
+**在本次分析范围内（{len(windows)} 个窗口、{len(records)} 行日志），
+未检出任何异常窗口。**
+
+这意味着：级别分布正常、无异常故障码、无日志静默、无序号缺口、无阈值越界。
+
+## 二、故障码统计
+
+{fault_block}
+
+## 三、这个结论意味着什么
+
+⚠️ **请注意区分两种"没有异常"**：
+
+1. **设备确实运行正常** —— 这是好消息，本报告就是记录这个状态
+2. **设备被人为关闭了故障注入** —— 见上表"设备当前模式"
+
+> 如果是第 2 种（设备处于"纯真实数据"模式），那么"没有异常"是**预期的**，
+> 不能据此说"系统没有误报"。要验证异常识别能力，请：
+> 按下板子上的 **KEY 按键**开启故障注入，等 1~2 分钟再生成一次报告。
+
+## 四、如何验证监测系统确实在工作
+
+「没有异常」本身不能证明监测链路是活的。建议做一次对照实验：
+
+| 步骤 | 预期 |
+|---|---|
+| 1. 记下当前的健康报告 | 异常窗口 = 0 |
+| 2. 按板子上的 KEY 开启故障注入 | 板载 OLED 显示 `FAULT:ON`，看板徽标变琥珀色 |
+| 3. 等 1~2 分钟，再点一次「生成根因报告」 | 出现异常窗口，生成带证据的根因报告 |
+| 4. 再按一次 KEY 关闭注入 | 恢复纯真实数据 |
+
+**这一来一回，才同时证明了"不误报"和"不漏报"。**
+
+---
+
+<sub>本报告由「OpenHarmony 日志智能聚合分析工具」（本项目自研的分析程序）自动生成
+ ｜ 生成时间 {now}
+ ｜ 本报告不调用 LLM：没有异常就没有根因可推，为凑产出去调模型只会诱导它编造问题
+ ｜ 判定方法：60 秒窗口聚合 + 5 信号加权打分（级别 0.30 / 故障码 0.25 / 静默 0.25 / seq缺口 0.10 / 阈值 0.10）</sub>
+"""
+        fn = "健康报告_%s.md" % time.strftime("%m%d_%H%M%S")
+        (LIVE_REPORT_DIR / fn).write_text(md, encoding="utf-8")
+        return fn
 
     def analyze_status(self) -> dict:
         st = dict(self.analysis)

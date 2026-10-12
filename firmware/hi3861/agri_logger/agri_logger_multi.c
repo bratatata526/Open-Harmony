@@ -212,6 +212,10 @@ static unsigned      g_stack_space_last = 0;
  * ======================================================================== */
 #define KEY_POLL_MS         100                  /* 主循环里每 100ms 查一次按键 */
 
+/* 每隔多少轮重发一次 AgriMode（设备当前模式）。
+ * 5 秒一轮 → 12 轮 = 1 分钟。周期太短会刷屏，太长则看板起晚了要等很久。 */
+#define MODE_REPORT_EVERY   12
+
 static volatile int  g_inject_on = 0;       /* 0=纯真实数据（默认） 1=开启注入 */
 static int           g_key_stable = 1;      /* 去抖后的按键状态：1=松开 0=按下 */
 static int           g_key_same = 0;        /* 连续读到同一状态的次数 */
@@ -671,7 +675,7 @@ static void agri_main_task(void)
      *   把频率打出来，一眼就能核对时间戳的单位对不对：
      *     tickfreq=100Hz 表示 1 tick = 10ms，日志里每秒应有 100 个 tick
      *   这比"盯着时间戳猜它是不是秒"可靠得多。 */
-    printf("[agri_logger] FW=v2.7 mode=");
+    printf("[agri_logger] FW=v2.8 mode=");
 #if SINGLE_DEVICE_MODE
     printf("single-device(真实传感器直通), period=5000ms, tickfreq=");
 #else
@@ -749,8 +753,13 @@ static void agri_main_task(void)
 
         /* ---- 模式切换了？立刻刷屏 + 发一条日志 ----
          * 放在这里而不是按键回调里：按键是 100ms 级的，而日志要用到
-         * b1..b4 缓冲和 g_cycle，在主循环里发最省事也最安全。 */
-        if (g_mode_dirty) {
+         * b1..b4 缓冲和 g_cycle，在主循环里发最省事也最安全。
+         *
+         * ★ 除了"切换时立刻发"，还要【周期性重发】。
+         *   踩过的坑：原来只在切换时发一次，结果看板如果在板子开机【之后】
+         *   才启动，就永远抓不到这条 AgriMode，界面上一直显示"设备模式 未知"。
+         *   现在每 MODE_REPORT_EVERY 轮补发一次，看板随时启动都能读到。 */
+        if (g_mode_dirty || (g_cycle % MODE_REPORT_EVERY) == 0) {
             g_mode_dirty = 0;
             oled_update(base_t, base_h, base_l, g_cycle);
             AGRI_I(DOM_HEALTH, "AgriMode", '-',

@@ -169,25 +169,43 @@ body::after{
 .kpi .u{font-size:10px; color:var(--ink-faint); margin-left:2px}
 
 /* ── 主网格 ─────────────────────────────────────────────────────────── */
+/* ★ 可拖动布局：列宽/行高全部走 CSS 变量，拖拽条改这些变量即可。
+     变量挂在 .grid 上，面板尺寸跟着 grid 走，不用手动算面板大小。 */
 .grid{
-  display:grid; gap:10px; min-height:0;
-  grid-template-columns: 268px 1fr 320px;
-  grid-template-rows: minmax(140px,auto) minmax(120px,auto) 1fr;
+  display:grid; gap:10px; min-height:0; position:relative;
+  --gc1:268px;    /* 左列（故障码 / 异常族） */
+  --gc3:400px;    /* 右列（环境曲线 / 报告）—— 给宽一点，曲线才看得清 */
+  --gr1:170px;    /* 第一行高 */
+  --gr2:150px;    /* 第二行高 */
+  grid-template-columns: var(--gc1) 1fr var(--gc3);
+  grid-template-rows: var(--gr1) var(--gr2) 1fr;
   grid-template-areas:
     "faults  timeline  zones"
     "fams    timeline  zones"
     "fams    stream    reports";
 }
+
+/* 拖拽条：绝对定位覆盖在网格间隙上，平时透明，悬停/拖动时才显形 */
+.splitter{position:absolute; z-index:30; background:transparent; transition:background .12s}
+.splitter:hover,.splitter.drag{background:rgba(60,230,139,.55)}
+.splitter.v{width:11px; margin-left:-5px; cursor:col-resize}
+.splitter.h{height:11px; margin-top:-5px; cursor:row-resize}
+/* 拖动时禁止选中文字，否则会拖出一片蓝色选区；canvas 也要禁掉 pointer-events */
+body.resizing{user-select:none}
+body.resizing canvas{pointer-events:none}
+
 @media (max-width:1280px){
-  .grid{grid-template-columns:240px 1fr; grid-template-rows:auto auto 1fr; grid-template-areas:
-    "faults timeline" "fams stream" "reports reports";}
+  .grid{grid-template-columns:var(--gc1) 1fr; grid-template-rows:auto auto 1fr;
+    grid-template-areas:
+      "faults timeline" "fams stream" "reports reports";}
   .grid .zones{display:none}
+  .splitter{display:none}
 }
 @media (max-width:900px){
   body{overflow:auto}
   .shell{height:auto}
-  .grid{grid-template-columns:1fr; grid-template-areas:
-    "timeline" "stream" "faults" "fams" "reports";}
+  .grid{grid-template-columns:1fr; grid-template-rows:auto;
+    grid-template-areas:"timeline" "stream" "faults" "fams" "reports";}
 }
 
 /* 异常族卡片：把"反复出现的同一类异常"压成一条，一眼看出频次 */
@@ -261,6 +279,34 @@ canvas{display:block; width:100%}
 
 /* 大棚卡片 */
 .zgrid{display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line)}
+/* .zones 面板只有一个设备时（单设备模式）铺满整行，别挤在半边 */
+.zgrid.one{grid-template-columns:1fr}
+
+/* 指标选择器：切换看哪条曲线 */
+.metricsel{display:flex; gap:0; margin-left:auto}
+.mb{
+  background:transparent; border:1px solid var(--line); border-right:none;
+  color:var(--ink-faint); font-family:var(--mono); font-size:10px;
+  padding:2px 8px; cursor:pointer; letter-spacing:.06em;
+}
+.mb:last-child{border-right:1px solid var(--line)}
+.mb:hover{color:var(--ink)}
+.mb.on{color:var(--phosphor); background:rgba(60,230,139,.1); border-color:rgba(60,230,139,.45)}
+.btn.big{color:var(--cyan); border-color:rgba(70,200,216,.4); margin-left:6px}
+.btn.big:hover{background:rgba(70,200,216,.12)}
+
+/* 曲线放大浮层：整屏看趋势 */
+.bigchart{
+  position:fixed; inset:0; z-index:9997; background:rgba(6,10,9,.96);
+  display:none; flex-direction:column; padding:14px 18px; backdrop-filter:blur(3px);
+}
+.bigchart.open{display:flex}
+.bigchart header{display:flex; align-items:center; gap:10px; margin-bottom:10px}
+.bigchart h3{font-family:var(--disp); font-size:18px; letter-spacing:.2em; color:var(--phosphor)}
+.bigchart .wrap{flex:1; min-height:0; position:relative}
+.bigchart canvas{width:100%; height:100%; display:block}
+.bigchart .lg{display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; font-size:11px; color:var(--ink-dim)}
+.bigchart .lg i{display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:middle}
 .zcard{background:var(--panel); padding:8px 10px; display:flex; flex-direction:column; gap:5px}
 .zcard .zh{display:flex; align-items:baseline; gap:6px}
 .zcard .zz{
@@ -422,7 +468,12 @@ canvas{display:block; width:100%}
   </div>
 
   <!-- ══ 主网格 ══ -->
-  <div class="grid" style="grid-row:2/4">
+  <div class="grid" id="grid" style="grid-row:2/4">
+    <!-- 拖拽条（位置由 JS 按实际面板边界计算） -->
+    <div class="splitter v" data-k="gc1"></div>
+    <div class="splitter v" data-k="gc3"></div>
+    <div class="splitter h" data-k="gr1"></div>
+    <div class="splitter h" data-k="gr2"></div>
 
     <!-- 故障码 -->
     <section class="panel faults">
@@ -453,7 +504,17 @@ canvas{display:block; width:100%}
 
     <!-- 大棚环境 -->
     <section class="panel zones">
-      <header><h2>大棚环境</h2><span class="cnt">6 个逻辑设备</span></header>
+      <header>
+        <h2>环境曲线</h2>
+        <div class="metricsel" id="metricSel" title="选择要显示的曲线。'全部'会把温度/湿度/光照归一化后画在同一张图上，用于看变化趋势是否同步。">
+          <button class="mb on" data-m="all">全部</button>
+          <button class="mb" data-m="temp">温度</button>
+          <button class="mb" data-m="humi">湿度</button>
+          <button class="mb" data-m="light">光照</button>
+        </div>
+        <button class="btn big" id="btnZoneBig" title="把当前指标放大到整屏观看，所有设备叠在一起对比">放大</button>
+        <span class="cnt" id="zoneCnt"></span>
+      </header>
       <div class="body"><div class="zgrid" id="zoneGrid"></div></div>
     </section>
 
@@ -490,6 +551,17 @@ canvas{display:block; width:100%}
   </div>
 </div>
 
+<!-- 曲线放大浮层 -->
+<div class="bigchart" id="bigChart">
+  <header>
+    <h3 id="bigTitle">环境曲线</h3>
+    <span class="cnt" id="bigHint"></span>
+    <button class="btn" id="bigClose" style="margin-left:auto">关闭 ESC</button>
+  </header>
+  <div class="wrap"><canvas id="bigCanvas"></canvas></div>
+  <div class="lg" id="bigLegend"></div>
+</div>
+
 <!-- 报告阅读器 -->
 <div class="reader" id="reader">
   <div class="sheet">
@@ -515,7 +587,9 @@ const state = { records:[], playing:false, timer:null, cursor:0,
                 liveSource:'', isSim:false, panelTimer:null,
                 zone:'',            /* ← 当前聚焦的设备（'' = 全部） */
                 repSrc:'live',      /* ← 报告来源范围：live 只看真机 / all 含模拟 */
-                repAll:null };
+                repAll:null,
+                metric:'all',      /* 环境曲线当前指标：all/temp/humi/light */
+                lastZones:null };
 
 /* 给所有派生接口带上当前设备范围。
    整块看板共用这一个 scope：切了设备之后，KPI/时间线/异常族/报告/日志流
@@ -843,49 +917,324 @@ function renderTimeline(tl){
 }
 
 /* ── 大棚卡片 ───────────────────────────────────────────────────────── */
+/* ══ 环境曲线 ══════════════════════════════════════════════════════════
+   三种指标各有自己的量纲：温度 ℃、湿度 %、光照（AP3216C 原始值）。
+   直接把三条线画在一个坐标系里，光照会把温湿度压成一条直线 ——
+   所以"全部"模式下【每条曲线各自归一化到自己的 min~max】，
+   这样看的是【变化趋势是否同步】，而不是绝对数值大小。
+   要读绝对数值就切到单指标模式，那时纵轴是真实刻度。
+   ═══════════════════════════════════════════════════════════════════ */
+const METRICS = {
+  temp:  {key:'temp',  name:'温度', unit:'℃', color:'#ffb02e'},
+  humi:  {key:'humi',  name:'湿度', unit:'%',  color:'#46c8d8'},
+  light: {key:'light', name:'光照', unit:'',   color:'#3ce68b'},
+};
+const ZONE_COLORS = ['#3ce68b','#ffb02e','#46c8d8','#9d7bff','#ff4d4d','#7fd1ff'];
+
+function activeMetrics(){
+  const m = state.metric || 'all';
+  return m === 'all' ? ['temp','humi','light'] : [m];
+}
+
 function renderZones(zones){
   const box = $('#zoneGrid');
   const ids = Object.keys(zones).sort();
+  state.lastZones = zones;              /* 放大浮层与指标切换都要复用这份数据 */
   if(!ids.length){ box.innerHTML='<div class="empty">无设备数据</div>'; return; }
+  box.classList.toggle('one', ids.length === 1);
+  $('#zoneCnt').textContent = ids.length + ' 个设备';
+
   box.innerHTML = ids.map(z=>`
     <div class="zcard">
       <div class="zh"><span class="zz">${z}</span><span class="zn">${zones[z].name}</span></div>
       <canvas id="zc_${z}" data-zone="${z}"></canvas>
-      <div class="zrow"><span>温度</span><span id="zt_${z}" style="color:var(--amber)">–</span></div>
-      <div class="zrow"><span>湿度</span><span id="zh_${z}" style="color:var(--cyan)">–</span></div>
-      <div class="zrow"><span>光照</span><span id="zl_${z}" style="color:var(--phosphor)">–</span></div>
+      <div class="zrow"><span>温度</span><span id="zt_${z}" style="color:${METRICS.temp.color}">–</span></div>
+      <div class="zrow"><span>湿度</span><span id="zh_${z}" style="color:${METRICS.humi.color}">–</span></div>
+      <div class="zrow"><span>光照</span><span id="zl_${z}" style="color:${METRICS.light.color}">–</span></div>
     </div>`).join('');
   ids.forEach(z=>drawZone(z, zones[z]));
+}
+
+/** 画一条曲线。norm=true 时按自身 min~max 归一化（多指标叠加用） */
+function plotSeries(g, arr, W, H, color, norm, lo, hi){
+  const vals = arr.filter(x=>x!=null);
+  if(vals.length < 2) return null;
+  let a = lo, b = hi;
+  if(norm || a == null){
+    a = Math.min(...vals);
+    b = Math.max(...vals);
+  }
+  const span = (b - a) || 1;
+  g.beginPath();
+  let started = false;
+  arr.forEach((v,i)=>{
+    if(v == null) return;
+    const px = (arr.length>1 ? i/(arr.length-1) : 0) * W;
+    const py = H - 3 - ((v - a)/span) * (H - 8);
+    started ? g.lineTo(px,py) : (g.moveTo(px,py), started = true);
+  });
+  g.strokeStyle = color; g.lineWidth = 1.6; g.stroke();
+  return {lo:a, hi:b};
 }
 
 function drawZone(z, d){
   const cv = document.getElementById('zc_'+z); if(!cv) return;
   const dpr = window.devicePixelRatio||1;
-  const W = cv.parentElement.clientWidth-20, H=26;
-  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+'px'; cv.style.height=H+'px';
-  const g=cv.getContext('2d'); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
+  const W = Math.max(80, cv.parentElement.clientWidth - 20);
+  const H = 56;                                  /* 原来是 26px，太矮看不清趋势 */
+  cv.width = W*dpr; cv.height = H*dpr;
+  cv.style.width = W+'px'; cv.style.height = H+'px';
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
 
-  const draw=(arr,color)=>{
-    const v = arr.filter(x=>x!=null); if(v.length<2) return;
-    const lo=Math.min(...v), hi=Math.max(...v), span=(hi-lo)||1;
-    g.beginPath();
-    arr.forEach((val,i)=>{
-      if(val==null) return;
-      const px = i/(arr.length-1)*W;
-      const py = H-2 - ((val-lo)/span)*(H-5);
-      i===0?g.moveTo(px,py):g.lineTo(px,py);
-    });
-    g.strokeStyle=color; g.lineWidth=1.3; g.stroke();
-  };
-  draw(d.temp,'rgba(255,176,46,.9)');
-  draw(d.humi,'rgba(70,200,216,.75)');
+  const ms = activeMetrics();
+  if(ms.length === 1){
+    /* 单指标：用真实刻度，并在左上角标出数值范围 */
+    const m = METRICS[ms[0]];
+    const r = plotSeries(g, d[m.key], W, H, m.color, false);
+    if(r){
+      g.fillStyle = 'rgba(255,255,255,.28)';
+      g.font = '9px monospace';
+      g.fillText(r.hi.toFixed(m.key==='light'?0:1) + m.unit, 2, 9);
+      g.fillText(r.lo.toFixed(m.key==='light'?0:1) + m.unit, 2, H-2);
+    }
+  }else{
+    /* 全部：各画各的归一化曲线，看趋势同步性 */
+    ms.forEach(k=>plotSeries(g, d[METRICS[k].key], W, H, METRICS[k].color, true));
+  }
 
   const last = a => { for(let i=a.length-1;i>=0;i--) if(a[i]!=null) return a[i]; return null; };
   const t=last(d.temp), h=last(d.humi), l=last(d.light);
-  $('#zt_'+z).textContent = t!=null ? t.toFixed(1)+'℃' : '–';
-  $('#zh_'+z).textContent = h!=null ? h.toFixed(1)+'%' : '–';
-  $('#zl_'+z).textContent = l!=null ? l : '–';
+  const set=(id,v)=>{ const el=$('#'+id); if(el) el.textContent=v; };
+  set('zt_'+z, t!=null ? t.toFixed(1)+'℃' : '–');
+  set('zh_'+z, h!=null ? h.toFixed(1)+'%' : '–');
+  set('zl_'+z, l!=null ? l : '–');
 }
+
+/* ── 放大浮层：所有设备叠在一张大图上 ─────────────────────────────── */
+function drawBigChart(){
+  const cv = $('#bigCanvas'); if(!cv) return;
+  const zones = state.lastZones || {};
+  const ids = Object.keys(zones).sort();
+  const ms = activeMetrics();
+  const dpr = window.devicePixelRatio||1;
+  const W = cv.parentElement.clientWidth, H = cv.parentElement.clientHeight;
+  cv.width = W*dpr; cv.height = H*dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+
+  const padL = 52, padR = 14, padT = 14, padB = 26;
+  const iw = W-padL-padR, ih = H-padT-padB;
+  if(iw < 40 || ih < 40 || !ids.length) return;
+
+  /* 多指标叠在一起时各归一化；单指标时用全局 min~max，这样设备间可比 */
+  let globalLo = null, globalHi = null;
+  if(ms.length === 1){
+    const k = METRICS[ms[0]].key;
+    const all = ids.flatMap(z=>(zones[z][k]||[]).filter(x=>x!=null));
+    if(all.length){ globalLo = Math.min(...all); globalHi = Math.max(...all); }
+  }
+
+  /* 网格与纵轴刻度 */
+  g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1;
+  g.fillStyle = 'rgba(255,255,255,.3)'; g.font = '10px monospace';
+  for(let i=0;i<=4;i++){
+    const y = padT + ih*i/4;
+    g.beginPath(); g.moveTo(padL,y); g.lineTo(padL+iw,y); g.stroke();
+    if(globalLo != null){
+      const v = globalHi - (globalHi-globalLo)*i/4;
+      const u = ms.length===1 ? METRICS[ms[0]].unit : '';
+      g.fillText(v.toFixed(ms.length===1&&ms[0]==='light'?0:1)+u, 4, y+3);
+    }
+  }
+  /* 时间轴刻度 */
+  const tArr = ids.length ? (zones[ids[0]].t||[]) : [];
+  if(tArr.length > 1){
+    const t0 = tArr[0], t1 = tArr[tArr.length-1];
+    g.fillStyle = 'rgba(255,255,255,.3)';
+    for(let i=0;i<=6;i++){
+      const x = padL + iw*i/6;
+      g.beginPath(); g.moveTo(x,padT); g.lineTo(x,padT+ih); g.stroke();
+      g.fillText(fmtDur(t0 + (t1-t0)*i/6), x-14, H-8);
+    }
+  }
+
+  /* 曲线：每个设备一条线 */
+  const legend = [];
+  ids.forEach((z, zi)=>{
+    ms.forEach(k=>{
+      const m = METRICS[k];
+      const color = ms.length === 1 ? ZONE_COLORS[zi % ZONE_COLORS.length] : m.color;
+      const arr = zones[z][m.key] || [];
+      const vals = arr.filter(x=>x!=null);
+      if(vals.length < 2) return;
+      let a = globalLo, b = globalHi;
+      if(a == null){ a = Math.min(...vals); b = Math.max(...vals); }
+      const span = (b-a)||1;
+      g.beginPath();
+      let started = false;
+      arr.forEach((v,i)=>{
+        if(v == null) return;
+        const px = padL + (arr.length>1 ? i/(arr.length-1) : 0)*iw;
+        const py = padT + ih - ((v-a)/span)*ih;
+        started ? g.lineTo(px,py) : (g.moveTo(px,py), started = true);
+      });
+      g.strokeStyle = color;
+      g.lineWidth = ms.length === 1 ? 2 : 1.5;
+      g.globalAlpha = ms.length === 1 ? 1 : (k==='light'?0.55:0.85);
+      g.stroke();
+      g.globalAlpha = 1;
+      if(zi === 0 || ms.length === 1)
+        legend.push(`<span><i style="background:${color}"></i>${ms.length===1?z+' '+zones[z].name:m.name}</span>`);
+    });
+  });
+  $('#bigLegend').innerHTML = legend.join('');
+  $('#bigHint').textContent = ms.length === 1
+    ? `${ids.length} 个设备叠图 ｜ 纵轴为真实刻度`
+    : '各曲线已按自身范围归一化 —— 看的是趋势是否同步，不是绝对大小';
+}
+
+/* ══ 可拖动面板边框 ═══════════════════════════════════════════════════
+   拖拽条的位置不写死，而是【按面板实际边界算】——
+   网格有媒体查询、面板可能 display:none，写死坐标一定会错位。
+   拖动只改 .grid 上的 CSS 变量，浏览器自己重排。
+   ═══════════════════════════════════════════════════════════════════ */
+const GRID_LIMITS = {
+  gc1: [170, 460],    /* 左列宽 */
+  gc3: [240, 760],    /* 右列宽 */
+  gr1: [110, 420],    /* 第一行高 */
+  gr2: [ 90, 420],    /* 第二行高 */
+};
+
+function layoutSplitters(){
+  const grid = $('#grid'); if(!grid) return;
+  if(getComputedStyle(grid).display === 'none') return;
+  const gr = grid.getBoundingClientRect();
+  const q = s => grid.querySelector(s);
+  const faults = q('.faults'), timeline = q('.timeline'),
+        zones = q('.zones'),  stream = q('.stream'), fams = q('.fams');
+  if(!faults || !timeline || !faults.offsetParent) return;   /* 小屏时面板可能被隐藏 */
+
+  const fr = faults.getBoundingClientRect();
+  const tr = timeline.getBoundingClientRect();
+  const zr = zones ? zones.getBoundingClientRect() : null;
+  const sr = stream ? stream.getBoundingClientRect() : null;
+
+  /* 竖直：左列右边界、中列右边界（= 右列左边界） */
+  const v1 = fr.right + 5, v2 = tr.right + 5;
+  /* 水平：第一行下边界（faults 只占第一行）、第二行下边界（timeline 占 1~2 行） */
+  const h1 = fr.bottom + 5, h2 = tr.bottom + 5;
+
+  grid.querySelectorAll('.splitter').forEach(sp=>{
+    const k = sp.dataset.k;
+    if(k === 'gc1'){ sp.style.left = (v1-gr.left)+'px'; sp.style.top='0'; sp.style.height='100%'; }
+    if(k === 'gc3'){ sp.style.left = (v2-gr.left)+'px'; sp.style.top='0'; sp.style.height='100%'; }
+    if(k === 'gr1'){ sp.style.top = (h1-gr.top)+'px';  sp.style.left='0'; sp.style.width='100%'; }
+    if(k === 'gr2'){ sp.style.top = (h2-gr.top)+'px';  sp.style.left='0'; sp.style.width='100%'; }
+    /* 被隐藏的面板对应的拖拽条也藏起来 */
+    const hide = (k==='gc3' && !zr) || (k==='gr2' && !sr);
+    sp.style.display = hide ? 'none' : '';
+  });
+}
+
+(function(){
+  const grid = $('#grid'); if(!grid) return;
+  let dragging = null;
+
+  grid.querySelectorAll('.splitter').forEach(sp=>{
+    sp.addEventListener('mousedown', e=>{
+      e.preventDefault();
+      dragging = { sp, key: sp.dataset.k, start: 0 };
+      const gr = grid.getBoundingClientRect();
+      const cs = getComputedStyle(grid);
+      if(dragging.key === 'gc1') dragging.base = parseFloat(cs.getPropertyValue('--gc1'));
+      if(dragging.key === 'gc3') dragging.base = parseFloat(cs.getPropertyValue('--gc3'));
+      if(dragging.key === 'gr1') dragging.base = parseFloat(cs.getPropertyValue('--gr1'));
+      if(dragging.key === 'gr2') dragging.base = parseFloat(cs.getPropertyValue('--gr2'));
+      dragging.sign = (dragging.key === 'gc3') ? -1 : 1;   /* 右列是从右边量的 */
+      dragging.start = (dragging.key[1] === 'c') ? e.clientX : e.clientY;
+      dragging.grid0 = (dragging.key[1] === 'c') ? gr.left : gr.top;
+      dragging.abs0 = dragging.base + (dragging.key==='gc1' ? 0
+                      : dragging.key==='gc3' ? (gr.width - dragging.base) : 0);
+      sp.classList.add('drag');
+      document.body.classList.add('resizing');
+    });
+  });
+
+  window.addEventListener('mousemove', e=>{
+    if(!dragging) return;
+    const isCol = dragging.key[1] === 'c';
+    const lim = GRID_LIMITS[dragging.key];
+    let v;
+    if(dragging.key === 'gc1'){
+      v = e.clientX - dragging.grid0;
+    }else if(dragging.key === 'gc3'){
+      const gr = grid.getBoundingClientRect();
+      v = gr.right - e.clientX;
+    }else if(dragging.key === 'gr1'){
+      v = e.clientY - dragging.grid0;
+    }else{
+      const gr = grid.getBoundingClientRect();
+      const g1 = parseFloat(getComputedStyle(grid).getPropertyValue('--gr1'));
+      v = e.clientY - dragging.grid0 - g1 - 10;   /* 10 = gap */
+    }
+    v = Math.max(lim[0], Math.min(lim[1], v));
+    grid.style.setProperty('--' + dragging.key, v + 'px');
+    layoutSplitters();
+    relayoutZones();
+  });
+
+  window.addEventListener('mouseup', ()=>{
+    if(!dragging) return;
+    dragging.sp.classList.remove('drag');
+    document.body.classList.remove('resizing');
+    dragging = null;
+    /* 布局稳定后再重绘一次，避免拖拽过程中曲线拉到一半 */
+    setTimeout(()=>{ layoutSplitters(); relayoutZones(); relayout(); }, 60);
+  });
+
+  /* 首屏 + 尺寸变化时重新定位拖拽条 */
+  const reposition = ()=>{ layoutSplitters(); };
+  window.addEventListener('resize', reposition);
+  setTimeout(reposition, 60);
+  setTimeout(reposition, 400);
+})();
+
+/* ── 环境曲线：指标切换 / 放大 / 重绘 ───────────────────────────────── */
+function setMetric(m){
+  state.metric = m;
+  document.querySelectorAll('#metricSel .mb').forEach(b=>
+    b.classList.toggle('on', b.dataset.m === m));
+  renderZones(state.lastZones || {});
+  if($('#bigChart').classList.contains('open')) drawBigChart();
+}
+document.querySelectorAll('#metricSel .mb').forEach(b=>{
+  b.onclick = ()=>setMetric(b.dataset.m);
+});
+
+$('#btnZoneBig').onclick = ()=>{
+  $('#bigChart').classList.add('open');
+  drawBigChart();
+};
+$('#bigClose').onclick = ()=> $('#bigChart').classList.remove('open');
+$('#bigChart').onclick = e=>{ if(e.target.id === 'bigChart') $('#bigChart').classList.remove('open'); };
+
+/* 曲线面板尺寸变化后要重绘（canvas 不会自己跟着变） */
+function relayoutZones(){
+  renderZones(state.lastZones || {});
+  layoutSplitters();
+  if($('#bigChart').classList.contains('open')) drawBigChart();
+}
+
+/* 窗口/面板尺寸变化 → 用 ResizeObserver 精确跟随，比监听 resize 事件准 */
+(function(){
+  let t = null;
+  const debounced = ()=>{ clearTimeout(t); t = setTimeout(relayoutZones, 120); };
+  window.addEventListener('resize', debounced);
+  if(window.ResizeObserver){
+    const ro = new ResizeObserver(debounced);
+    const zg = $('#zoneGrid'); if(zg) ro.observe(zg);
+    const bc = $('#bigChart'); if(bc) ro.observe(bc);
+  }
+})();
 
 /* ── 日志流 ─────────────────────────────────────────────────────────── */
 function logMatches(r){
@@ -1158,7 +1507,12 @@ async function applyZone(zone){
 $('#devSel').onchange = e=>applyZone(e.target.value);
 
 $('#readerClose').onclick = ()=> $('#reader').classList.remove('open');
-document.addEventListener('keydown', e=>{ if(e.key==='Escape') $('#reader').classList.remove('open'); });
+document.addEventListener('keydown', e=>{
+  if(e.key !== 'Escape') return;
+  /* 放大浮层在最上层，ESC 先关它 */
+  if($('#bigChart').classList.contains('open')){ $('#bigChart').classList.remove('open'); return; }
+  $('#reader').classList.remove('open');
+});
 $('#reader').onclick = e=>{ if(e.target.id==='reader') $('#reader').classList.remove('open'); };
 </script>
 </body>
