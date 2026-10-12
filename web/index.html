@@ -316,7 +316,12 @@ canvas{display:block; width:100%}
 .zcard .zn{font-size:9px; color:var(--ink-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .zcard .zrow{display:flex; justify-content:space-between; font-size:11px}
 .zcard .zrow span:first-child{color:var(--ink-faint); font-size:10px}
-.zcard canvas{height:26px}
+/* ★ 曲线的尺寸交给 CSS，JS 只负责按实际尺寸设置画布分辨率。
+   原来是用 JS 算像素宽度写死到 canvas 的 style 上，容器一变就得靠 JS 重算，
+   一旦重绘没触发（或触发晚了），图就不跟着变。
+   改成 width:100% 之后 canvas 元素永远自动填满容器，
+   JS 只在尺寸真变了时修正 backing store，不会反过来影响布局。 */
+.zcard canvas{width:100%; height:56px; display:block}
 
 /* ── 日志流（主角）──────────────────────────────────────────────────── */
 .stream .body{padding:0}
@@ -589,7 +594,9 @@ const state = { records:[], playing:false, timer:null, cursor:0,
                 repSrc:'live',      /* ← 报告来源范围：live 只看真机 / all 含模拟 */
                 repAll:null,
                 metric:'all',      /* 环境曲线当前指标：all/temp/humi/light */
-                lastZones:null };
+                lastZones:null,
+                zoneSig:'',        /* 当前渲染的设备集合指纹，没变就只重绘不重建 DOM */
+                __observeZoneCards:null };
 
 /* 给所有派生接口带上当前设备范围。
    整块看板共用这一个 scope：切了设备之后，KPI/时间线/异常族/报告/日志流
@@ -940,7 +947,24 @@ function renderZones(zones){
   const box = $('#zoneGrid');
   const ids = Object.keys(zones).sort();
   state.lastZones = zones;              /* 放大浮层与指标切换都要复用这份数据 */
-  if(!ids.length){ box.innerHTML='<div class="empty">无设备数据</div>'; return; }
+
+  /* ★ 设备集合没变时【只重绘 canvas，不重建 DOM】。
+     原来每次（含每 3 秒的自动刷新）都重建整个 innerHTML，有两个坏处：
+       1. 闪烁，而且日志流的滚动位置之类的状态会丢
+       2. 重建会改变被观察元素自身的尺寸 → 触发 ResizeObserver 的循环保护，
+          后续回调被节流甚至不再触发，表现就是"改了窗口大小图不跟着变" */
+  const sig = ids.join(',');
+  if(sig === state.zoneSig){
+    redrawZones();
+    return;
+  }
+  state.zoneSig = sig;
+
+  if(!ids.length){
+    state.zoneSig = '';
+    box.innerHTML = '<div class="empty">无设备数据</div>';
+    return;
+  }
   box.classList.toggle('one', ids.length === 1);
   $('#zoneCnt').textContent = ids.length + ' 个设备';
 
@@ -952,7 +976,15 @@ function renderZones(zones){
       <div class="zrow"><span>湿度</span><span id="zh_${z}" style="color:${METRICS.humi.color}">–</span></div>
       <div class="zrow"><span>光照</span><span id="zl_${z}" style="color:${METRICS.light.color}">–</span></div>
     </div>`).join('');
-  ids.forEach(z=>drawZone(z, zones[z]));
+  redrawZones();
+  /* DOM 重建后新卡片不在 ResizeObserver 的观察列表里，要重新挂上 */
+  if(state.__observeZoneCards) state.__observeZoneCards();
+}
+
+/** 只重画所有曲线画布，不动 DOM。窗口/面板尺寸变化时走这条路。 */
+function redrawZones(){
+  const zones = state.lastZones || {};
+  Object.keys(zones).forEach(z=>drawZone(z, zones[z]));
 }
 
 /** 画一条曲线。norm=true 时按自身 min~max 归一化（多指标叠加用） */
@@ -979,12 +1011,22 @@ function plotSeries(g, arr, W, H, color, norm, lo, hi){
 
 function drawZone(z, d){
   const cv = document.getElementById('zc_'+z); if(!cv) return;
-  const dpr = window.devicePixelRatio||1;
-  const W = Math.max(80, cv.parentElement.clientWidth - 20);
-  const H = 56;                                  /* 原来是 26px，太矮看不清趋势 */
-  cv.width = W*dpr; cv.height = H*dpr;
-  cv.style.width = W+'px'; cv.style.height = H+'px';
-  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+
+  /* ★ 尺寸从【元素自身】读，不从父容器算。
+     CSS 里写的是 width:100%; height:56px，所以 clientWidth/clientHeight
+     永远等于当前真实尺寸 —— 容器变了它就是新的，不需要谁来通知。
+     JS 只做一件事：把 backing store（cv.width/height）按 dpr 对齐，
+     再按逻辑尺寸画。 */
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if(W < 20 || H < 10) return;                    /* 面板被隐藏/还没布局完 */
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.round(W*dpr), bh = Math.round(H*dpr);
+  if(cv.width !== bw || cv.height !== bh){        /* 只有尺寸真变了才重置，避免清空 */
+    cv.width = bw; cv.height = bh;
+  }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,W,H);
 
   const ms = activeMetrics();
   if(ms.length === 1){
@@ -1016,10 +1058,16 @@ function drawBigChart(){
   const zones = state.lastZones || {};
   const ids = Object.keys(zones).sort();
   const ms = activeMetrics();
-  const dpr = window.devicePixelRatio||1;
-  const W = cv.parentElement.clientWidth, H = cv.parentElement.clientHeight;
-  cv.width = W*dpr; cv.height = H*dpr;
-  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+
+  /* 同样从【元素自身】读尺寸（CSS 是 width:100%; height:100%），
+     只把 backing store 按 dpr 对齐；尺寸没变就不重置画布，避免闪。 */
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if(W < 60 || H < 60) return;                    /* 浮层刚打开还没布局完 */
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.round(W*dpr), bh = Math.round(H*dpr);
+  if(cv.width !== bw || cv.height !== bh){ cv.width = bw; cv.height = bh; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
 
   const padL = 52, padR = 14, padT = 14, padB = 26;
   const iw = W-padL-padR, ih = H-padT-padB;
@@ -1217,9 +1265,13 @@ $('#btnZoneBig').onclick = ()=>{
 $('#bigClose').onclick = ()=> $('#bigChart').classList.remove('open');
 $('#bigChart').onclick = e=>{ if(e.target.id === 'bigChart') $('#bigChart').classList.remove('open'); };
 
-/* 曲线面板尺寸变化后要重绘（canvas 不会自己跟着变） */
+/* 曲线面板尺寸变化后要重绘（canvas 的 backing store 不会自己跟着变） */
 function relayoutZones(){
-  renderZones(state.lastZones || {});
+  /* ★ 这里【只重绘 canvas 和拖拽条位置】，绝不重建 DOM。
+     在 ResizeObserver 回调里改被观察元素的尺寸，会触发浏览器的
+     "ResizeObserver loop" 循环保护 —— 后续回调被节流甚至不再触发，
+     表现就是"窗口变了图不跟着变"。 */
+  redrawZones();
   layoutSplitters();
   if($('#bigChart').classList.contains('open')) drawBigChart();
 }
@@ -1227,12 +1279,21 @@ function relayoutZones(){
 /* 窗口/面板尺寸变化 → 用 ResizeObserver 精确跟随，比监听 resize 事件准 */
 (function(){
   let t = null;
-  const debounced = ()=>{ clearTimeout(t); t = setTimeout(relayoutZones, 120); };
+  const debounced = ()=>{ clearTimeout(t); t = setTimeout(relayoutZones, 80); };
   window.addEventListener('resize', debounced);
+
   if(window.ResizeObserver){
     const ro = new ResizeObserver(debounced);
-    const zg = $('#zoneGrid'); if(zg) ro.observe(zg);
+    /* 观察每一张 zcard（而不是 zoneGrid）：卡片尺寸才是曲线的真实容器尺寸 */
+    const observeCards = ()=>{
+      const box = $('#zoneGrid'); if(!box) return;
+      box.querySelectorAll('.zcard').forEach(c=>ro.observe(c));
+    };
+    state.__observeZoneCards = observeCards;   /* renderZones 重建 DOM 后要重新挂 */
+
     const bc = $('#bigChart'); if(bc) ro.observe(bc);
+    setTimeout(observeCards, 100);
+    setTimeout(observeCards, 600);
   }
 })();
 
