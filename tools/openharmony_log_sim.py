@@ -65,6 +65,8 @@ F_SEQ, F_TEMP, F_HUMI, F_LIGHT = 1, 2, 3, 4
 F_FAULT, F_CODE, F_TICK, F_HEAP = 5, 6, 7, 8
 F_COST, F_RETRY, F_STATE, F_THRESH = 9, 10, 11, 12
 F_RSSI, F_QUEUE, F_MISS = 13, 14, 15
+# 系统异常类专用字段（Hi3861 FAQ 第 3 章）
+F_MCAUSE, F_ADDR, F_CPU, F_MEMFAIL = 17, 18, 19, 20
 
 # 故障码数值（与 log_def.h 的 AGRI_FAULT_xxx 一致）
 FAULT = {f.name: f.code for f in F.FAULTS.values()}
@@ -80,11 +82,12 @@ ZONES = list("ABCDEF")        # 6 个逻辑大棚
 
 DOMAIN = {
     "sensor": "A001", "report": "A002", "health": "A003", "ctrl": "A004",
-    "task": "A005", "comm": "A006", "fault": "A007",
+    "task": "A005", "comm": "A006", "fault": "A007", "crash": "A008",
 }
 TAG = {
     "sensor": "AgriSensor", "report": "AgriReport", "health": "AgriHealth",
     "ctrl": "AgriCtrl", "task": "AgriTask", "comm": "AgriComm", "fault": "AgriFault",
+    "crash": "AgriCrash",
 }
 
 
@@ -157,6 +160,63 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("I", "ctrl", [(F_FAULT, 4002), (F_CODE, 6), (F_STATE, 1)],
          "F4002", "normal_operation", False),
     ],
+    # ---------------- 系统异常类（Hi3861V100/LV100 FAQ 第 3 章）----------------
+    # FAQ 3.1 / 3.1.4：CPU 被长期占用 → 看门狗漏喂 → 超时复位 → 异常复位（完整因果链）
+    "watchdog_reset": [
+        ("W", "task", [(F_FAULT, 3011), (F_CODE, 19), (F_CPU, 98)],
+         "F3011", "cpu_overload", False),
+        ("E", "health", [(F_FAULT, 3005), (F_CODE, 14), (F_MISS, 2)],
+         "F3005", "watchdog_timeout", True),
+        ("E", "crash", [(F_FAULT, 3007), (F_CODE, 17), (F_MISS, 3)],
+         "F3007", "watchdog_reset", True),
+        ("E", "health", [(F_FAULT, 5003), (F_CODE, 24)],
+         "F5003", "abnormal_reset", True),
+    ],
+    # FAQ 3.2：任务/中断中死机 + 非法地址访问（mcause 见 FAQ 表3-5，addr 为 mtval）
+    "system_crash": [
+        ("E", "crash", [(F_FAULT, 3009), (F_CODE, 20), (F_MCAUSE, 5)],
+         "F3009", "crash_task", False),
+        ("E", "crash", [(F_FAULT, 3010), (F_CODE, 22), (F_ADDR, 3584)],
+         "F3010", "bad_addr", True),
+        ("E", "crash", [(F_FAULT, 3008), (F_CODE, 18), (F_MCAUSE, 2)],
+         "F3008", "isr_block", True),
+        ("E", "health", [(F_FAULT, 5003), (F_CODE, 24)],
+         "F5003", "abnormal_reset", True),
+    ],
+    # ---- 传感器读取失败全链路：超时 → 校验失败 → 离线（覆盖 F1001/F1003/F1006）----
+    "sensor_read_fail": [
+        ("E", "sensor", [(F_FAULT, 1001), (F_CODE, 1), (F_COST, 1200)],
+         "F1001", "sensor_timeout", False),
+        ("E", "sensor", [(F_FAULT, 1003), (F_CODE, 2), (F_RETRY, 2)],
+         "F1003", "crc_error", True),
+        ("E", "sensor", [(F_FAULT, 1006), (F_CODE, 4), (F_MISS, 5)],
+         "F1006", "sensor_offline", True),
+    ],
+    # ---- 数据帧校验错（覆盖 F2005），信号弱作为次生 ----
+    "frame_corrupt": [
+        ("E", "comm", [(F_FAULT, 2005), (F_CODE, 2), (F_RETRY, 3)],
+         "F2005", "frame_crc_error", False),
+        ("W", "comm", [(F_FAULT, 2003), (F_CODE, 8), (F_RSSI, 72)],
+         "F2003", "frame_crc_error", True),
+    ],
+    # ---- 任务栈溢出（覆盖 F3002）----
+    # 字段表不动：用 state=3(degraded) + code=10(stack_overflow) 表达"栈水位超限"，
+    # 再接一条分配失败与任务卡死，构成"栈溢出 → 内存被打坏 → 任务跑不动"的因果链。
+    "stack_overflow": [
+        ("E", "health", [(F_FAULT, 3002), (F_CODE, 10), (F_STATE, 3)],
+         "F3002", "stack_overflow", False),
+        ("E", "health", [(F_FAULT, 3001), (F_CODE, 12), (F_HEAP, 1024)],
+         "F3001", "stack_overflow", True),
+        ("E", "task", [(F_FAULT, 3003), (F_CODE, 11), (F_COST, 6200)],
+         "F3003", "stack_overflow", True),
+    ],
+    # ---- 启动期配置问题（覆盖 F5002/F5004）----
+    "boot_config_fail": [
+        ("W", "health", [(F_FAULT, 5002), (F_CODE, 16), (F_RETRY, 1)],
+         "F5002", "config_load_fail", False),
+        ("W", "health", [(F_FAULT, 5004), (F_CODE, 25)],
+         "F5004", "wdt_cfg_invalid", False),
+    ],
 }
 
 # 每个 zone 的主攻场景（与 docs/02 §5.3 的 6 组分工一致）
@@ -183,6 +243,7 @@ class Stats:
     lines_garbage: int = 0
     faults_injected: int = 0
     boot_events: int = 0
+    silence_events: int = 0
     max_line_bytes: int = 0
 
     def report(self) -> str:
@@ -194,6 +255,7 @@ class Stats:
             f"  故意乱码    {self.lines_garbage}\n"
             f"故障注入次数  {self.faults_injected}\n"
             f"重启事件      {self.boot_events}\n"
+            f"日志静默      {self.silence_events} 次\n"
             f"最长行字节数  {self.max_line_bytes} / {MAX_LINE_BYTES}"
         )
 
@@ -305,6 +367,17 @@ def run(args: argparse.Namespace) -> Stats:
     stats = Stats()
 
     zones = [ZoneSim(z) for z in (args.zones.split(",") if args.zones else ZONES)]
+
+    # 可选：强制场景（演示 / 复现用），默认仍按 zone 分工（保证评测数据集可复现）
+    forced = [s.strip() for s in (getattr(args, "scenario", None) or "").split(",") if s.strip()]
+    if forced:
+        unknown = [s for s in forced if s not in SCENARIOS]
+        if unknown:
+            print("[sim] 未知场景: %s\n      可选: %s"
+                  % (", ".join(unknown), ", ".join(SCENARIOS)), file=sys.stderr)
+            raise SystemExit(2)
+        for i, z in enumerate(zones):
+            z.scenario = forced[i % len(forced)]
     out = open(args.out, "w", encoding="utf-8", newline="") if args.out else sys.stdout
     gt = open(args.label_out, "w", encoding="utf-8") if args.label_out else None
     em = Emitter(out, gt, stats, args)
@@ -315,6 +388,9 @@ def run(args: argparse.Namespace) -> Stats:
     next_sample_at = 0.0
     next_health_at = 10.0
     next_reboot_at = args.reboot_after_s
+    # 日志静默：silence_next = 下一次开始静默的时刻，silent_until = 本次静默结束的时刻
+    silence_next = args.silence_every
+    silent_until = 0.0
     start_wall = time.time()
 
     # ★ 多大棚环境模型 ★
@@ -335,10 +411,18 @@ def run(args: argparse.Namespace) -> Stats:
             base_h = BASE_H_X10 + int(10 * math.cos(virtual_t / 900.0))
             farm.update_base(base_t, base_h, BASE_LIGHT, elapsed_s=virtual_t)
 
+            # ---- 日志静默：模拟上报任务卡死，周期日志与健康心跳一起停摆 ----
+            if args.silence_every > 0 and virtual_t >= silence_next:
+                silence_next = virtual_t + args.silence_every
+                silent_until = virtual_t + max(args.silence_for, period_s * 3)
+                stats.silence_events += 1
+
             # ---- 每个 zone 的周期上报 ----
             if virtual_t >= next_sample_at:
                 next_sample_at += period_s
-                for z in zones:
+                # 静默期一条周期日志都不产生、seq 也不推进 —— 真机上"任务卡死"就是这样
+                active_zones = [] if virtual_t < silent_until else zones
+                for z in active_zones:
                     z.tick(farm.get(z.zid))
 
                     # 1) 故障注入优先
@@ -386,13 +470,14 @@ def run(args: argparse.Namespace) -> Stats:
             # ---- 健康心跳（A003，全局日志用 z=-） ----
             if virtual_t >= next_health_at:
                 next_health_at += 10.0
-                heap = 20480 - int(200 * (virtual_t / 60.0)) % 4096
-                if heap < 4096:
-                    em.emit(virtual_t, "W", "health", fmt_msg(
-                        "-", (F_SEQ, 0), (F_FAULT, 3006), (F_CODE, 15), (F_HEAP, heap)))
-                else:
-                    em.emit(virtual_t, "I", "health", fmt_msg(
-                        "-", (F_SEQ, 0), (F_HEAP, heap)))
+                if virtual_t >= silent_until:      # 静默期连心跳也停（整条日志通路卡死）
+                    heap = 20480 - int(200 * (virtual_t / 60.0)) % 4096
+                    if heap < 4096:
+                        em.emit(virtual_t, "W", "health", fmt_msg(
+                            "-", (F_SEQ, 0), (F_FAULT, 3006), (F_CODE, 15), (F_HEAP, heap)))
+                    else:
+                        em.emit(virtual_t, "I", "health", fmt_msg(
+                            "-", (F_SEQ, 0), (F_HEAP, heap)))
 
             # ---- 设备重启（检验时间轴换算与重启检测） ----
             if args.reboot_after_s and virtual_t >= next_reboot_at:
@@ -478,6 +563,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Hi3861 多任务日志模拟器（输出与真机字节级同构）",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--zones", default="A,B,C,D,E,F", help="要模拟的 zone 列表")
+    p.add_argument("--scenario", default=None,
+                   help="强制所有 zone 使用该故障场景（逗号分隔可轮转），如 "
+                        "system_crash / watchdog_reset；默认按 zone 分工")
     p.add_argument("--period", type=float, default=5.0, help="上报周期（秒，虚拟时间）")
     p.add_argument("--duration", type=float, default=0, help="运行时长（秒，0=无限）")
     p.add_argument("--speed", type=float, default=1.0, help="虚拟时间加速倍数")
@@ -488,6 +576,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="高温阈值 ×10（超过则触发 F1005 灌溉），默认 35.0℃")
     p.add_argument("--reboot-after-s", type=float, default=1800,
                    help="每隔多少虚拟秒模拟一次设备重启（0=不重启）")
+    # 日志静默（非故障型异常）：模拟"上报任务卡死 → 日志彻底停摆"
+    p.add_argument("--silence-every", type=float, default=0.0,
+                   help="每隔多少虚拟秒制造一次【日志静默】（0=不制造）")
+    p.add_argument("--silence-for", type=float, default=15.0,
+                   help="每次静默持续多少秒（需 > 2×上报周期 才会被判为静默异常）")
     p.add_argument("--out", default=None, help="输出文件（默认 stdout）")
     p.add_argument("--label-out", default=None,
                    help="ground-truth 标注文件（JSONL，评测用）")

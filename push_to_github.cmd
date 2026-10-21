@@ -1,32 +1,40 @@
 @echo off
-chcp 65001 >nul
+rem ===========================================================================
+rem  Push-to-GitHub helper.
+rem  ENCODING: saved as GBK/ANSI (cp936) ON PURPOSE -- same reason as
+rem  start_dashboard.cmd (cmd.exe + chcp 65001 mis-parses Chinese batch files).
+rem ===========================================================================
+chcp 936 >nul
 cd /d "%~dp0"
-title æ¨é€åˆ° GitHub
+title ÍÆËÍµ½ GitHub
+set PYTHONIOENCODING=utf-8
 
 echo ============================================================
-echo   æ¨é€åˆ° GitHub  -  OpenHarmony æ—¥å¿—æ™ºèƒ½èšåˆåˆ†æå·¥å…·
+echo   ÍÆËÍµ½ GitHub  -  OpenHarmony ÈÕÖ¾ÖÇÄÜ¾ÛºÏ·ÖÎö¹¤¾ß
 echo ============================================================
 echo.
 
-echo [å¾…æ¨é€çš„æäº¤]
+echo [´ıÍÆËÍµÄÌá½»]
 git log --oneline -1
 echo.
-echo [è¿œç¨‹ä»“åº“]
+echo [Ô¶³Ì²Ö¿â]
 git remote get-url origin
 echo.
 
 echo ------------------------------------------------------------
-echo   ç¬¬ 1 æ­¥ï¼šæ¨é€å‰å®‰å…¨æ£€æŸ¥ï¼ˆç¡®è®¤æ²¡æœ‰å¯†é’¥ï¼‰
+echo   µÚ 1 ²½£ºÍÆËÍÇ°°²È«¼ì²é£¨È·ÈÏÃ»ÓĞÃÜÔ¿£©
 echo ------------------------------------------------------------
-if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" tools\secret_scan.py --tracked
-) else (
-    python tools\secret_scan.py --tracked
-)
-if errorlevel 1 (
+rem  .venv ¿ÉÓÃ¾ÍÓÃËü£¬·ñÔòÍË»Ø PATH ÀïµÄ python£¨ÏÂÃæÕâ¼¸ĞĞÈ«ÊÇ´¿ ASCII£©
+set "SCAN_PY=python"
+if exist ".venv\Scripts\python.exe" set "SCAN_PY=.venv\Scripts\python.exe"
+chcp 65001 >nul
+"%SCAN_PY%" tools\secret_scan.py --tracked
+set "SCAN_RC=%ERRORLEVEL%"
+chcp 936 >nul
+if not "%SCAN_RC%"=="0" (
     echo.
-    echo [X] æ‰«æå‘ç°ç–‘ä¼¼å¯†é’¥ï¼Œå·²ã€ä¸­æ­¢æ¨é€ã€‘ï¼
-    echo     è¯·å…ˆå¤„ç†æ‰å¯†é’¥å†é‡è·‘æœ¬è„šæœ¬ã€‚
+    echo [X] É¨Ãè·¢ÏÖÒÉËÆÃÜÔ¿£¬ÒÑ¡¾ÖĞÖ¹ÍÆËÍ¡¿£¡
+    echo     ÇëÏÈ´¦ÀíµôÃÜÔ¿ÔÙÖØÅÜ±¾½Å±¾¡£
     echo.
     pause
     exit /b 1
@@ -34,12 +42,12 @@ if errorlevel 1 (
 echo.
 
 echo ------------------------------------------------------------
-echo   ç¬¬ 2 æ­¥ï¼šæ¨é€åˆ° GitHub
+echo   µÚ 2 ²½£ºÍÆËÍµ½ GitHub
 echo ------------------------------------------------------------
-echo [æç¤º] ç¨åå¯èƒ½å¼¹å‡ºæµè§ˆå™¨è¦æ±‚æˆæƒ GitHubï¼Œè¯·ç‚¹ç¡®è®¤ã€‚
-echo        å¦‚æœæ²¡å¼¹çª—æˆ–æˆæƒå¤±è´¥ï¼Œè§ä¸‹é¢"æ¨é€å¤±è´¥"çš„æ’æŸ¥æç¤ºã€‚
+echo [ÌáÊ¾] ÉÔºó¿ÉÄÜµ¯³öä¯ÀÀÆ÷ÒªÇóÊÚÈ¨ GitHub£¬ÇëµãÈ·ÈÏ¡£
+echo        Èç¹ûÃ»µ¯´°»òÊÚÈ¨Ê§°Ü£¬¼ûÏÂÃæ"ÍÆËÍÊ§°Ü"µÄÅÅ²éÌáÊ¾¡£
 echo.
-echo æŒ‰ä»»æ„é”®å¼€å§‹æ¨é€...
+echo °´ÈÎÒâ¼ü¿ªÊ¼ÍÆËÍ...
 pause >nul
 echo.
 
@@ -47,17 +55,17 @@ git push -u origin main
 if errorlevel 1 (
     echo.
     echo ============================================================
-    echo   [X] æ¨é€å¤±è´¥
+    echo   [X] ÍÆËÍÊ§°Ü
     echo ============================================================
-    echo   å¸¸è§åŸå› ï¼š
-    echo     1. æœªæˆæƒï¼šæµè§ˆå™¨çª—å£æ²¡ç‚¹ç¡®è®¤ï¼Œæˆ–è¢«å®‰å…¨è½¯ä»¶æ‹¦æˆª
-    echo        è§£å†³ï¼šé‡è·‘æœ¬è„šæœ¬ï¼Œæ³¨æ„çœ‹æœ‰æ²¡æœ‰å¼¹çª—
-    echo     2. ä»“åº“éç©ºï¼šåœ¨ GitHub å»ºä»“åº“æ—¶å‹¾äº† README / .gitignore / license
-    echo        è§£å†³ï¼šåˆ æ‰è¿œç¨‹ä»“åº“é‡å»ºä¸€ä¸ªã€å®Œå…¨ç©ºçš„ã€‘ï¼Œæˆ–åœ¨ GitHub ä¸Š
-    echo              åˆ é™¤é‚£ä¸ªåˆå§‹æäº¤åå†æ¨
-    echo     3. ç½‘ç»œé—®é¢˜ï¼šå›½å†…è®¿é—® GitHub å¯èƒ½ä¸ç¨³å®šï¼Œå¯å¤šé‡è¯•å‡ æ¬¡
+    echo   ³£¼ûÔ­Òò£º
+    echo     1. Î´ÊÚÈ¨£ºä¯ÀÀÆ÷´°¿ÚÃ»µãÈ·ÈÏ£¬»ò±»°²È«Èí¼şÀ¹½Ø
+    echo        ½â¾ö£ºÖØÅÜ±¾½Å±¾£¬×¢Òâ¿´ÓĞÃ»ÓĞµ¯´°
+    echo     2. ²Ö¿â·Ç¿Õ£ºÔÚ GitHub ½¨²Ö¿âÊ±¹´ÁË README / .gitignore / license
+    echo        ½â¾ö£ºÉ¾µôÔ¶³Ì²Ö¿âÖØ½¨Ò»¸ö¡¾ÍêÈ«¿ÕµÄ¡¿£¬»òÔÚ GitHub ÉÏ
+    echo              É¾³ıÄÇ¸ö³õÊ¼Ìá½»ºóÔÙÍÆ
+    echo     3. ÍøÂçÎÊÌâ£º¹úÄÚ·ÃÎÊ GitHub ¿ÉÄÜ²»ÎÈ¶¨£¬¿É¶àÖØÊÔ¼¸´Î
     echo.
-    echo   æ‰‹åŠ¨æ’æŸ¥ï¼š
+    echo   ÊÖ¶¯ÅÅ²é£º
     echo       git ls-remote origin
     echo       git push -u origin main
     echo.
@@ -67,12 +75,12 @@ if errorlevel 1 (
 
 echo.
 echo ============================================================
-echo   âœ” æ¨é€æˆåŠŸ
+echo   [OK] ÍÆËÍ³É¹¦
 echo ============================================================
 echo.
-echo   ä»“åº“åœ°å€ï¼š https://github.com/moudou517/openharmony-log-analyzer
+echo   ²Ö¿âµØÖ·£º https://github.com/bratatata526/Open-Harmony
 echo.
-echo   é˜Ÿå‹å…‹éš†å‘½ä»¤ï¼š
-echo       git clone https://github.com/moudou517/openharmony-log-analyzer.git
+echo   ¶ÓÓÑ¿ËÂ¡ÃüÁî£º
+echo       git clone https://github.com/bratatata526/Open-Harmony.git
 echo.
 pause

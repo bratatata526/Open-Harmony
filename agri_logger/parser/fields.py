@@ -54,6 +54,13 @@ FIELDS: dict[int, FieldDef] = {f.fid: f for f in [
     FieldDef(14, "queue",   1,   "",    "消息队列长度"),
     FieldDef(15, "miss",    1,   "",    "看门狗漏喂次数"),
     FieldDef(16, "zone_id", 1,   "",    "逻辑设备编号 0=A 1=B ... 5=F"),
+    # ---- 系统异常类专用（对应 Hi3861V100／Hi3861LV100 FAQ 第 3 章"系统异常类"）----
+    FieldDef(17, "mcause",  1,   "",    "机器异常原因码（FAQ 表3-5：0=指令地址非对齐 1=取指访问错 "
+                                        "2=非法指令 4=Load地址非对齐 5=Load访问错 "
+                                        "6=Store/AMO地址非对齐 7=Store/AMO访问错 15=Store页错）"),
+    FieldDef(18, "addr",    1,   "B",   "出错地址 / mtval（非法地址访问、踩内存时由硬件记录）"),
+    FieldDef(19, "cpu",     1,   "%",   "CPU 占用率 0~100（FAQ 3.1.4：>95 需主动让出 CPU）"),
+    FieldDef(20, "memfail", 1,   "",    "内存池累计申请失败次数（FAQ 3.2.2.3.4 内存池信息）"),
 ]}
 
 # 状态机编码 → 可读短语（解析时还原）
@@ -90,10 +97,18 @@ FAULTS: dict[int, FaultDef] = {f.code: f for f in [
     FaultDef(3004, "F3004", "队列积压",         "W", "A005", False),
     FaultDef(3005, "F3005", "看门狗即将触发",   "E", "A003", False),
     FaultDef(3006, "F3006", "空闲堆不足",       "W", "A003", False),
+    # ---- 系统异常类（Hi3861 FAQ 第 3 章：看门狗 3.1 / 死机 3.2）----
+    FaultDef(3007, "F3007", "看门狗超时复位",   "E", "A008", False),
+    FaultDef(3008, "F3008", "中断阻塞",         "E", "A008", False),
+    FaultDef(3009, "F3009", "系统死机",         "E", "A008", False),
+    FaultDef(3010, "F3010", "非法内存访问",     "E", "A008", False),
+    FaultDef(3011, "F3011", "CPU 占用率过高",   "W", "A005", False),
     FaultDef(4001, "F4001", "执行器超时",       "W", "A004", False),
     FaultDef(4002, "F4002", "灌溉状态变更",     "I", "A004", True),   # 正常事件
     FaultDef(5001, "F5001", "设备启动",         "I", "A003", True),   # 正常事件
     FaultDef(5002, "F5002", "配置重载失败",     "W", "A003", False),
+    FaultDef(5003, "F5003", "异常复位",         "E", "A003", False),
+    FaultDef(5004, "F5004", "看门狗超时配置非法", "W", "A003", False),
 ]}
 
 # ---------------------------------------------------------------------------
@@ -118,6 +133,16 @@ ERROR_CODES: dict[int, str] = {
     14: "wdt_feed_missed",
     15: "heap_low",
     16: "config_load_failed",
+    # ---- 系统异常类（FAQ 第 3 章）----
+    17: "wdt_reset",
+    18: "isr_block",
+    19: "cpu_overload",
+    20: "crash_task",
+    21: "crash_isr",
+    22: "bad_addr",
+    23: "mem_corrupt",
+    24: "abnormal_reset",
+    25: "wdt_config_invalid",
     99: "unknown",
 }
 
@@ -130,6 +155,7 @@ DOMAINS: dict[str, str] = {
     "A005": "任务调度",
     "A006": "配网与通信",
     "A007": "故障注入器",
+    "A008": "系统异常（看门狗/死机）",
 }
 
 

@@ -56,9 +56,18 @@ SYSTEM_L1 = """你是 OpenHarmony 物联网设备的日志运维专家。你的�
 F1001/F1002/F1006 = 传感器读取失败类（超时、单总线无应答、连续失败）
 F1003/F1004/F1005 = 数据质量类（CRC 错、物理不可能值、越阈值）
 F2001~F2005 = 通信类（连接失败、上报超时、信号弱、重连、帧校验错）
-F3001~F3006 = 系统类（内存分配失败、栈溢出、任务卡死、队列积压、看门狗、堆不足）
+F3001~F3006 = 资源与调度类（内存分配失败、栈溢出、任务卡死、队列积压、看门狗即将触发、堆不足）
+F3007~F3010 = 系统崩溃类（看门狗超时复位、中断阻塞、系统死机、非法内存访问）
+F3011 = CPU 负载类（CPU 占用率过高，cpu>95%）
 F4001/F4002 = 执行器类（灌溉超时、状态变更）
 F5001/F5002 = 生命周期类（启动、配置重载失败）
+F5003/F5004 = 复位与配置类（异常复位、看门狗超时配置非法）
+
+【消息体字段 ID 含义（日志体是"ID 值"配对，必须据此解读其中的数字）】
+1=seq  2=temp(×0.1℃)  3=humi(×0.1%)  4=light  5=fault故障码  6=code错误码
+7=tick(ms)  8=heap(剩余堆,字节)  9=cost(ms)  10=retry  11=state(0idle/1灌溉/2通风/3降级)
+12=thresh  13=rssi(存正值,实际取负)  14=queue  15=miss(看门狗漏喂次数)  16=zone_id
+17=mcause(机器异常原因码)  18=addr(出错地址/mtval)  19=cpu(占用率%)  20=memfail(申请失败次数)
 
 【重要判据】
 1. F2004（断线重连）、F4002（灌溉状态变更）、F5001（设备启动）是【正常运维事件】，不是异常。
@@ -66,6 +75,14 @@ F5001/F5002 = 生命周期类（启动、配置重载失败）
    即使没有 ERROR 也要标记为异常——这是"日志静默"异常。
 3. seq 出现缺口说明日志或数据丢失，属于异常。
 4. 温度读数 -127.0℃ 或 85.0℃ 是传感器失效的标志值，属于异常。
+5. F3007/F3008/F5003 表示系统【已经】因看门狗超时或死机异常复位过，严重度高于
+   F3005（后者只是"即将触发"）；F5004 是看门狗超时时间配置非法（FAQ 要求自定义值 ≥6500ms）。
+6. F3009/F3010 若同时带 mcause(17) 或 addr(18)，说明发生了非法指令/非法地址访问等硬件异常，
+   属于"死机类"，根因多在野指针、数组越界、栈溢出写坏内存。
+7. F3011 通常是任务死循环或长时间占用 CPU 的征兆。若同一窗口内 F3011 → F3005 →
+   F3007/F5003 依次出现，按【一条因果链】处理：根因是 CPU 被长期占用，复位是结果。
+8. 中断阻塞(F3008)与任务阻塞(F3003)要分开：前者发生在中断上下文里长时间不返回，
+   会直接触发看门狗复位，排查方向是中断服务程序里是否有阻塞调用。
 
 【输出格式】必须输出合法 JSON，且只输出 JSON：
 {"is_anomaly": true, "cluster_key": "onewire_sensor_timeout", "severity": "P1",
@@ -133,6 +150,17 @@ SYSTEM_L2 = """你是 OpenHarmony 系统运维专家，负责输出根因分析�
   【重要】若同一窗口内同时出现 F3006(堆不足) → F3001(分配失败) → F2002(上报超时)，
   说明这是【一条因果链】，根因是内存枯竭，上报超时是受害者，不要误判为网络问题。
 - Hi3861 轻量设备 RAM 非常有限（约 300KB 级），任务栈溢出与堆枯竭是高发问题
+- 看门狗(F3005/F3007/F5003)常见原因：系统在空闲时自动喂狗，超时多半是【阻塞导致进不了空闲】。
+  任务中阻塞会先打印 "watchdog isr" 死机信息再复位；中断中阻塞会打印中断阻塞位置后直接复位。
+  频繁触发时按 FAQ 3.1.4 查三类原因：① 任务死循环/长时间阻塞 ② 长时间占用 CPU
+  ③ 循环体长时间处理——第 ③ 类应在循环体里调 hi_cpup_load_check_proc（CPU>95% 时让出 CPU），
+  必要时调 hi_watchdog_feed 主动喂狗。看门狗自定义超时时间不得低于 6500ms。
+- 死机(F3009/F3010)定位：看 eid/rid（0x1 任务中死机、0x2 中断中死机、0x3 看门狗任务中死机、
+  0x4 看门狗中断中死机、0x5 系统软复位）+ mcause/ccause（见 FAQ 表3-5：0x0 指令地址非对齐、
+  0x2 非法指令、0x5 Load 访问错、0x7 Store/AMO 访问错）+ mtval（出错地址）。
+  栈溢出看任务信息里 Stack Overflow 标志是否为 1；单板重启后可用 AT+DUMP 查看上次死机信息。
+- 非法内存访问(F3010)本质是"踩内存"：野指针、数组越界、栈溢出写坏相邻任务栈、释放后继续使用。
+  结合 addr(字段18) 与 map / 反汇编(asm) 定位到具体函数，再看轨迹调度信息确认异常前后的任务切换。
 """
 
 USER_L2_TEMPLATE = """【异常窗口信息】
@@ -317,6 +345,28 @@ class Report:
             return self.generated_at
         return time.strftime("%Y-%m-%d %H:%M:%S")
 
+    def _summary_line(self) -> str:
+        """报告的【一句话摘要】—— 放在标题正下方，是整份报告最先被读的一行。
+
+        优先用 LLM 给的 summary（L1 提示词要求"≤50字，须含哪个 zone、什么现象"）；
+        规则降级时用窗口统计拼成同一句式，保证两种引擎下摘要都像"人话"、
+        且【任何情况下都有摘要】，不会出现空白。
+        粒度只用「zone + 模块 tag + 故障名」，不引入 task 名/地址等日志里没有的字段。
+        """
+        w = self.window
+        if self.mode == "llm":
+            s = (self.analysis.summary or "").strip()
+            if s:
+                return s
+        zones = "、".join(z for z in w.zones if z and z != "-") or "全局"
+        if w.fault_count:
+            tag, cnt = w.fault_count.most_common(1)[0]
+            return ("检测到 %s 在 %ds~%ds 出现%s（%s）共 %d 次，窗口内 %d 条日志。"
+                    % (zones, w.start_ts, w.end_ts, F.fault_name(int(tag[1:])),
+                       tag, cnt, w.line_count))
+        return ("检测到 %s 窗口异常（%s）。"
+                % (zones, "；".join(w.anomaly_reasons) or "异常分数越界"))
+
     def to_markdown(self, validator: "EvidenceValidator") -> str:
         a = self.analysis
         r = self.rca
@@ -334,6 +384,9 @@ class Report:
         title = r.get("title") or a.summary or f"{a.window_id} 异常分析"
         out = [
             f"# {title}",
+            "",
+            # ★ 摘要紧贴标题：报告以"简洁直观"为主，读者第一眼要能看懂发生了什么
+            f"> **摘要**｜{self._summary_line()}",
             "",
             # ★ 生成时间放表格第一行：拿到任何一份报告，第一眼就知道它是什么时候算的
             f"| 项目 | 值 |",
@@ -539,6 +592,13 @@ class AnomalyAnalyzer:
             chain.append("传感器读取异常")
         if {3003, 3004} & codes:
             chain.append("任务调度异常")
+        # ---- 系统异常类（FAQ 第 3 章）：CPU 过载 → 看门狗/崩溃 → 异常复位 ----
+        if 3011 in codes:
+            chain.append("CPU 占用率过高")
+        if {3007, 3008, 3009, 3010} & codes:
+            chain.append("看门狗/系统崩溃")
+        if 5003 in codes:
+            chain.append("设备异常复位")
 
         if len(chain) > 1:
             cause = ("跨模块因果链：" + " → ".join(chain) +

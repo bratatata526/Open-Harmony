@@ -38,7 +38,7 @@ import os
 import re
 import threading
 import time
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -51,7 +51,22 @@ sys.path.insert(0, str(ROOT))
 from agri_logger.parser.parser import LogParser, LEVEL_ORDER      # noqa: E402
 from agri_logger.parser import fields as F                        # noqa: E402
 from agri_logger.pipeline.windows import aggregate_and_score      # noqa: E402
-from agri_logger.analyzer.rca import window_signature, cluster_families   # noqa: E402
+from agri_logger.analyzer.rca import (window_signature, cluster_families,     # noqa: E402
+                                      AnomalyAnalyzer, EvidenceValidator, Report)
+from agri_logger.analyzer.llm_client import LLMClient                        # noqa: E402
+
+# ---------------------------------------------------------------------------
+# 自动分析：实时模式下【检测到新的异常窗口】就调 LLM 生成本窗口的报告
+#
+# 为什么要有它：需求是"检测到异常 → 给出该异常的根因报告"，而不是"等人点按钮"。
+# 但必须防止失控烧钱/刷屏，所以有三道闸：
+#   ① 只分析【已闭合】的窗口（最后一个是还在增长的，先不动）
+#   ② 同一窗口只出一份（window_id 去重）
+#   ③ 同一聚合指纹在冷却期内不重复出报告（防止同一故障每 60 秒刷一份）
+# ---------------------------------------------------------------------------
+AUTO_ANALYZE = True          # 总开关；命令行 --no-auto-analyze 可关
+AUTO_SCAN_BATCH = 5          # 每轮最多排入几个新窗口（防积压时一次烧掉大量预算）
+AUTO_FP_COOLDOWN_S = 180.0   # 同一指纹的冷却时间（秒）；设 0 = 不冷却
 
 WEB_DIR = ROOT / "web"
 REPORT_DIRS = [ROOT / "reports_live", ROOT / "reports_llm", ROOT / "reports"]
@@ -101,11 +116,18 @@ class DataStore:
         # 前端靠它判断"我手里的游标还算不算数"，避免重启后出现重复日志。
         self._live_epoch = 0
         self._live_thread = None
+        self._refresh_thread = None     # 独立刷新节拍（不依赖浏览器是否开着）
         self._live_port = ""
         self._live_baud = 115200
         self._live_sim = False
         self._bad_samples: list = []    # 实时模式下解析失败的原始行（最多留 5 条）
         self.analysis: dict = {"running": False, "done": False, "started": 0.0}
+        # ---- 自动分析状态（检测到异常 → 出报告）----
+        self._auto_q: deque = deque()          # 待分析窗口队列
+        self._auto_done: set = set()           # 已排入/已出过报告的窗口号（去重）
+        self._auto_fp_at: dict = {}            # 聚合指纹 -> 上次出报告时刻（冷却）
+        self._auto_busy = False                # 工作线程是否在跑
+        self.auto_state = {"queued": 0, "done": 0, "skipped": 0, "error": 0}
         self._load()
 
     # ---------------- 加载 ----------------
@@ -455,6 +477,7 @@ class DataStore:
             args=(gen, self._live_port, self._live_baud, self._live_sim),
             daemon=True)
         self._live_thread.start()
+        self._ensure_refresh_thread()      # 顺带把"刷新+自动分析"的节拍拉起来
 
     def _kill_live_proc(self, wait_s: float = 3.0) -> None:
         p = self._live_proc
@@ -646,6 +669,30 @@ class DataStore:
             th.join(timeout=3.0)
         self._live_thread = None
 
+    def _ensure_refresh_thread(self) -> None:
+        """拉起"派生视图刷新 + 自动分析"的独立节拍（每 2 秒）。
+
+        ★ 为什么必须有它：
+          live_refresh() 原本只在【浏览器发 GET】时被调用。于是"检测到异常就出报告"
+          会依赖有没有人开着看板页面 —— 前端一关，异常不再被扫描，报告就永远不会产生。
+          自动分析属于后台能力，不该依赖前端。这里给它一个自己的节拍。
+        """
+        th = getattr(self, "_refresh_thread", None)
+        if th is not None and th.is_alive():
+            return
+        self._refresh_thread = threading.Thread(target=self._refresh_loop, daemon=True)
+        self._refresh_thread.start()
+
+    def _refresh_loop(self) -> None:
+        while self.live.get("enabled") and not self._live_stop:
+            time.sleep(2.0)
+            if not self.live.get("enabled") or self._live_stop:
+                break
+            try:
+                self.live_refresh()        # 内部有 2 秒节流 + 记录数变化判断
+            except Exception as e:                               # noqa: BLE001
+                print("[refresh] %s: %s" % (type(e).__name__, e))
+
     def live_refresh(self) -> None:
         """实时模式下重算派生视图（汇总 / 时间线 / 分区曲线 / 窗口）。
 
@@ -686,6 +733,111 @@ class DataStore:
             ts = [r.ts_device for r in self.records if r.ts_device is not None]
             if ts:
                 self.meta["duration_s"] = round(max(ts) - min(ts), 1)
+
+        # 派生视图刚刷新完 → 顺便看看有没有【新的异常窗口】要自动出报告
+        self._scan_new_anomalies()
+
+    # ---------------- 自动分析：检测到异常就出报告 ----------------
+    def _scan_new_anomalies(self) -> None:
+        """把【刚刚闭合】的新异常窗口排进自动分析队列。
+
+        为什么只挑"闭合"的窗口：最后一个窗口还在增长，现在分析等于分析半截数据，
+        等下一轮它闭合了再看，报告才不会自相矛盾。
+        """
+        if not AUTO_ANALYZE or not self.live.get("enabled"):
+            return
+        if self.analysis.get("running"):
+            return          # 手动分析在跑，别和它抢 LLM；窗口不会丢，下一轮再排
+
+        with self.lock:
+            windows = list(self.windows)
+            records = list(self.records)
+        if len(windows) < 2:
+            return          # 还没有闭合窗口
+        anomaly_ids = {w.window_id for w in self.anomalies}
+
+        now = time.time()
+        fresh = []
+        for w in windows[:-1]:                      # 排除仍在增长的最后一个窗口
+            if w.window_id not in anomaly_ids:
+                continue
+            if w.window_id in self._auto_done:
+                continue
+            if not any(getattr(r, "src_name", "") == "live" for r in w.records):
+                self._auto_done.add(w.window_id)    # 静态基底数据不自动出报告
+                continue
+            fp = window_signature(w)
+            if AUTO_FP_COOLDOWN_S and (now - self._auto_fp_at.get(fp, 0.0)) < AUTO_FP_COOLDOWN_S:
+                self._auto_done.add(w.window_id)    # 同一故障刚报过，别刷屏
+                self.auto_state["skipped"] += 1
+                continue
+            self._auto_done.add(w.window_id)        # 先占位，避免下一轮重复排
+            self._auto_fp_at[fp] = now
+            fresh.append(w)
+            if len(fresh) >= AUTO_SCAN_BATCH:
+                break
+
+        if not fresh:
+            return
+        self._auto_q.extend(fresh)
+        self.auto_state["queued"] += len(fresh)
+        self._auto_kick()
+
+    def _auto_kick(self) -> None:
+        """确保只有一个自动分析线程在跑。"""
+        with self.lock:
+            if self._auto_busy or not self._auto_q:
+                return
+            self._auto_busy = True
+        threading.Thread(target=self._auto_worker, daemon=True).start()
+
+    def _auto_worker(self) -> None:
+        """逐条消费队列：一条异常 → 一次 L1+L2 → 一份 .md 报告。"""
+        try:
+            llm = LLMClient()               # 内部带缓存与日预算，超预算会自动降级
+            analyzer = AnomalyAnalyzer(llm)
+            while self._auto_q:
+                w = self._auto_q.popleft()
+                try:
+                    fn = self._auto_report_one(w, analyzer, llm)
+                    if fn:
+                        self.auto_state["done"] += 1
+                except Exception as e:                       # noqa: BLE001
+                    self.auto_state["error"] += 1
+                    print("[auto] %s 自动分析失败：%s: %s"
+                          % (w.window_id, type(e).__name__, e))
+        finally:
+            with self.lock:
+                self._auto_busy = False
+            if self._auto_q:
+                self._auto_kick()
+
+    def _auto_report_one(self, w, analyzer, llm) -> Optional[str]:
+        """给单个异常窗口出一份报告（结构与手动分析完全一致）。"""
+        with self.lock:
+            records = list(self.records)
+
+        a = analyzer.analyze_window(w, records)
+        rca, usage = analyzer.analyze_root_cause(w, a, records)
+        validator = EvidenceValidator(records)
+        ev = validator.validate(a.evidence_refs) or w.evidence(max_lines=15)
+
+        rep = Report(
+            window=w, analysis=a, evidence=ev, rca=rca, usage=usage,
+            mode=("llm" if a.mode == "llm" else "rule"), family_count=1,
+            generated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            data_source="真机实时串口 %s（检测到异常自动生成）"
+                        % self.live.get("source", "?"),
+            llm_model=getattr(llm, "model", "") if a.mode == "llm" else "")
+        name = a.display_name or window_signature(w)
+        name = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", name)[:48]
+        fn = "%s_%s.md" % (w.window_id, name)
+        LIVE_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        (LIVE_REPORT_DIR / fn).write_text(
+            rep.to_markdown(validator), encoding="utf-8")
+        print("[auto] 已生成 %s（引擎 %s，分数 %.3f，证据 %d 条）"
+              % (fn, a.mode, w.anomaly_score, len(ev)))
+        return fn
 
     def live_logs(self, since: int) -> dict:
         """只返回 since 之后新增的记录（增量拉取，避免整表重传）。
@@ -1041,6 +1193,24 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):              # 静音访问日志，避免刷屏
         pass
 
+    def _shutdown(self):
+        """优雅停止：先收掉采集子进程（释放串口），再关 HTTP 服务。
+
+        ★ 为什么必须走这个接口，而不是让启动器直接 taskkill：
+          采集器是看板的【子进程】。粗暴杀父进程会留下孤儿进程继续占着串口，
+          现象就是"看板关了，DevEco 还是打不开串口 / 报 upload port is occupied"。
+          这里按"先停采集、再停服务"的顺序收，串口一定被释放。
+        """
+        try:
+            STORE.stop_live()
+            r = {"ok": True, "msg": "采集已停止，串口已释放"}
+        except Exception as e:                               # noqa: BLE001
+            r = {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+        self._json(r)
+        # 在独立线程里关服务：不能在请求线程里阻塞 serve_forever 的收尾
+        import threading as _th
+        _th.Thread(target=self.server.shutdown, daemon=True).start()
+
     # ---- GET ----
     def do_GET(self):
         u = urlparse(self.path)
@@ -1081,6 +1251,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(STORE.live_status())
             if path == "/api/live/reconnect":
                 return self._json(STORE.restart_live())
+            if path == "/api/shutdown":
+                # 启动器的「停止」按钮 / 关闭窗口时调用，见 _shutdown()
+                return self._shutdown()
             if path == "/api/analyze":
                 if one("action") == "status":
                     return self._json(STORE.analyze_status())
@@ -1208,7 +1381,14 @@ def main(argv=None) -> int:
     ap.add_argument("--com", default=None,
                     help="实时模式的串口号（默认自动发现；板子换 USB 口后 COM 号会变）")
     ap.add_argument("--baud", type=int, default=115200, help="实时模式波特率")
+    ap.add_argument("--no-auto-analyze", action="store_true",
+                    help="关闭「检测到异常就自动生成报告」（默认开启，仅实时模式生效）")
     args = ap.parse_args(argv)
+
+    if args.no_auto_analyze:
+        global AUTO_ANALYZE
+        AUTO_ANALYZE = False
+        print("▶ 已关闭自动分析：异常报告只在点「生成根因报告」时产出")
 
     global STORE
     logp = pick_log(args.log)

@@ -1,57 +1,147 @@
 @echo off
-chcp 65001 >nul
+rem ===========================================================================
+rem  OpenHarmony dashboard launcher.
+rem  ENCODING: this file is saved as GBK/ANSI (cp936) ON PURPOSE.
+rem  cmd.exe mis-parses a batch file that contains multi-byte characters while
+rem  code page 65001 is active (lines get shifted, "xxx is not recognized").
+rem  So: every non-ASCII line below stays under cp936, and 65001 is only used
+rem  around the Python call, where all remaining lines are pure ASCII.
+rem  Keep this file GBK when editing (VSCode: see .vscode/settings.json).
+rem ===========================================================================
+chcp 936 >nul
+rem ---------------------------------------------------------------------------
+rem  ¡¾ÎªÊ²Ã´±¾ÎÄ¼şÊÇ GBK ±àÂë¡¿
+rem   cmd.exe ÔÚ chcp 65001£¨UTF-8£©ÏÂ½âÎöº¬ÖĞÎÄµÄÅú´¦Àí»á³öÏÖ"ĞĞ´íÎ»"£¬
+rem   Ò»´ó´®ÌáÊ¾»á±ä³É "xxx ²»ÊÇÄÚ²¿»òÍâ²¿ÃüÁî"¡£ËùÒÔ£º
+rem     1) ÖĞÎÄÌáÊ¾È«²¿·ÅÔÚ 936 ´úÂëÒ³ÏÂ£¨±¾»ú¿ØÖÆÌ¨Ä¬ÈÏ¾ÍÊÇ 936£©£»
+rem     2) Ö»ÔÚµ÷ÓÃ Python Ç°ºóÇĞµ½ 65001£¬ÄÇ¶ÎÀïÈ«ÊÇ´¿ ASCII£¬²»»á´íÎ»¡£
+rem   ±à¼­±¾ÎÄ¼şÇë´æ³É ANSI / GBK¡£
+rem ---------------------------------------------------------------------------
 cd /d "%~dp0"
-title OpenHarmony æ—¥å¿—åˆ†æçœ‹æ¿
+title OpenHarmony ÈÕÖ¾·ÖÎö¿´°å
 
 echo ============================================================
-echo   OpenHarmony æ—¥å¿—æ™ºèƒ½èšåˆåˆ†æå·¥å…·  -  çœ‹æ¿å¯åŠ¨å™¨
+echo   OpenHarmony ÈÕÖ¾ÖÇÄÜ¾ÛºÏ·ÖÎö¹¤¾ß  -  ¿´°åÆô¶¯Æ÷
 echo ============================================================
 echo.
 
-rem ---- 1. æ£€æŸ¥è™šæ‹Ÿç¯å¢ƒ ----
-if not exist ".venv\Scripts\python.exe" (
-    echo [X] æ‰¾ä¸åˆ° .venvï¼Œè¯·å…ˆåœ¨ä»“åº“æ ¹ç›®å½•æ‰§è¡Œï¼š
-    echo       python -m venv .venv
-    echo       .venv\Scripts\python.exe -m pip install pyserial
-    echo       .venv\Scripts\python.exe -m pip install "openai^<1.60"
-    echo.
-    pause
-    exit /b 1
-)
+rem ---- 1. ¼ì²éĞéÄâ»·¾³ ------------------------------------------------------
+rem  .venv ²»ÄÜ¿çµçÄÔ¿½±´£ºËüÄÚ²¿µÄ pyvenv.cfg ¼Ç×Å"Ô­µçÄÔ Python µÄ¾ø¶ÔÂ·¾¶"£¬
+rem  »»»úÆ÷ºóÄÇ¸ö python.exe ²»´æÔÚ£¬Æô¶¯Ê±»á±¨
+rem      No Python at 'C:\Users\<Ô­µçÄÔÓÃ»§Ãû>\...\python.exe'
+rem  Í¬Ê± .venv Àï¿ÉÄÜ»¹ÓĞÔ­µçÄÔ±àÒëµÄ .pyd£¬±¾»ú Python °æ±¾²»Í¬Ò²¼ÓÔØ²»ÁË¡£
+set "VENV_PY=.venv\Scripts\python.exe"
+if not exist "%VENV_PY%" goto venv_broken
+"%VENV_PY%" -c "import sys" >nul 2>&1
+if errorlevel 1 goto venv_broken
+"%VENV_PY%" tools\_dep_probe.py >nul 2>&1
+if errorlevel 1 goto deps_missing
+goto env_ok
 
-rem ---- 2. æ£€æŸ¥ 8080 æ˜¯å¦è¢«å ï¼ˆå¿…é¡»åŒ¹é… ":8080 " å¸¦ç©ºæ ¼ï¼Œå¦åˆ™è¯¯åŒ¹é… :80800ï¼‰----
+:venv_broken
+echo [X] ĞéÄâ»·¾³ .venv ²»¿ÉÓÃ£¨¿çµçÄÔ¿½±´¹ıÀ´µÄ .venv Ò»¶¨»áÊ§Ğ§£©¡£
+echo.
+set "SYSPY="
+for /f "delims=" %%I in ('python -c "import sys;print(sys.executable)" 2^>nul') do set "SYSPY=%%I"
+if defined SYSPY if not exist "%SYSPY%" set "SYSPY="
+if not defined SYSPY for /f "delims=" %%I in ('py -3 -c "import sys;print(sys.executable)" 2^>nul') do set "SYSPY=%%I"
+if defined SYSPY if not exist "%SYSPY%" set "SYSPY="
+if not defined SYSPY goto no_python
+
+echo [i] ÒÑÕÒµ½±¾»ú Python£º
+echo       %SYSPY%
+echo.
+echo     ÏÖÔÚÓÃËüÖØ½¨ .venv ²¢°²×°ÒÀÀµ£¨ĞèÒªÁªÍø£¬Ô¼ 1 ·ÖÖÓ£©¡£
+set "ANS="
+set /p "ANS=     ×Ô¶¯ĞŞ¸´£¿ (Y=ĞŞ¸´ / Ö±½Ó»Ø³µ=ÍË³ö) "
+if /i not "%ANS%"=="Y" exit /b 1
+echo.
+echo [*] É¾³ıÊ§Ğ§µÄ .venv ...
+if exist ".venv" rmdir /s /q ".venv"
+echo [*] ´´½¨ .venv ...
+"%SYSPY%" -m venv .venv
+if not exist "%VENV_PY%" goto venv_create_failed
+echo [*] °²×°ÒÀÀµ ...
+"%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
+if errorlevel 1 goto deps_install_failed
+echo.
+echo [OK] .venv ÒÑĞŞ¸´Íê³É¡£
+goto env_ok
+
+:no_python
+echo [X] ±¾»úÃ»ÕÒµ½¿ÉÓÃµÄ Python£¨ÊÔ¹ı python ºÍ py -3£©¡£
+echo     ÇëÏÈ°²×° Python 3.8 ÒÔÉÏ°æ±¾£¬°²×°Ê±¹´Ñ¡ "Add Python to PATH"£¬
+echo     È»ºóÖØĞÂÔËĞĞ±¾½Å±¾¡£
+echo.
+pause
+exit /b 1
+
+:venv_create_failed
+echo [X] ´´½¨ .venv Ê§°Ü£¬ÇëÊÖ¶¯Ö´ĞĞ£º
+echo       "%SYSPY%" -m venv .venv
+echo       "%VENV_PY%" -m pip install -r requirements.txt
+echo.
+pause
+exit /b 1
+
+:deps_missing
+echo [!] .venv ÄÜÆô¶¯£¬µ«ÒÀÀµ²»ÆëÈ«£¨ĞèÒª serial / openai / yaml / jinja2 / rich£©¡£
+echo.
+set "ANS="
+set /p "ANS=     ÏÖÔÚ°²×°ÒÀÀµ£¿ (Y=°²×° / Ö±½Ó»Ø³µ=ÍË³ö) "
+if /i not "%ANS%"=="Y" exit /b 1
+echo.
+"%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
+if errorlevel 1 goto deps_install_failed
+echo.
+echo [OK] ÒÀÀµ°²×°Íê³É¡£
+goto env_ok
+
+:deps_install_failed
+echo [X] ÒÀÀµ°²×°Ê§°Ü£¬Çë¼ì²éÍøÂçºóÊÖ¶¯Ö´ĞĞ£º
+echo       "%VENV_PY%" -m pip install -r requirements.txt
+echo     ¹úÄÚÏÂÔØÂı¿ÉÒÔ»»¾µÏñ£º
+echo       "%VENV_PY%" -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+echo.
+pause
+exit /b 1
+
+:env_ok
+
+rem ---- 2. ¼ì²é 8080 ÊÇ·ñ±»Õ¼£¨±ØĞëÆ¥Åä ":8080 " ´ø¿Õ¸ñ£¬·ñÔòÎóÆ¥Åä :80800£©----
 netstat -ano | findstr "LISTENING" | findstr ":8080 " >nul 2>&1
 if not errorlevel 1 (
-    echo [!] 8080 ç«¯å£å·²è¢«å ç”¨ï¼Œå¾ˆå¯èƒ½æ˜¯ä¸Šä¸€æ¬¡çš„çœ‹æ¿è¿˜åœ¨è·‘ã€‚
-    echo     è¯·å…ˆå…³æ‰é‚£ä¸ªçª—å£ï¼ˆåœ¨çª—å£é‡ŒæŒ‰ Ctrl+Cï¼‰ï¼Œå†è¿è¡Œæœ¬è„šæœ¬ã€‚
+    echo [!] 8080 ¶Ë¿ÚÒÑ±»Õ¼ÓÃ£¬ºÜ¿ÉÄÜÊÇÉÏÒ»´ÎµÄ¿´°å»¹ÔÚÅÜ¡£
+    echo     ÇëÏÈ¹ØµôÄÇ¸ö´°¿Ú£¨ÔÚ´°¿ÚÀï°´ Ctrl+C£©£¬ÔÙÔËĞĞ±¾½Å±¾¡£
     echo.
-    echo     æŸ¥æ˜¯è°å çš„ï¼š
+    echo     ²éÊÇË­Õ¼µÄ£º
     echo       netstat -ano ^| findstr :8080
     echo.
     pause
     exit /b 1
 )
 
-rem ---- 3. ä½¿ç”¨é¡»çŸ¥ ----
-echo [é‡è¦] çœ‹æ¿è¿è¡ŒæœŸé—´ä¼šç‹¬å ä¸²å£ã€‚
-echo        DevEco æ­¤æ—¶æ— æ³• Upload / çƒ§å½• / å¼€ Monitorã€‚
-echo        è¦çƒ§å½•è¯·å…ˆå…³æ‰æœ¬çª—å£ã€‚
+rem ---- 3. Ê¹ÓÃĞëÖª ----
+echo [ÖØÒª] ¿´°åÔËĞĞÆÚ¼ä»á¶ÀÕ¼´®¿Ú¡£
+echo        DevEco ´ËÊ±ÎŞ·¨ Upload / ÉÕÂ¼ / ¿ª Monitor¡£
+echo        ÒªÉÕÂ¼ÇëÏÈ¹Øµô±¾´°¿Ú¡£
 echo.
-echo [æç¤º] åˆšçƒ§å½•å®Œå¦‚æœçœ‹ä¸åˆ°æ•°æ®ï¼Œè¯·ç‰©ç†æ‹”æ’ä¸€æ¬¡ USBã€‚
-echo        HiBurn ä¼šæŠŠèŠ¯ç‰‡ç•™åœ¨ bootloaderï¼ŒæŒ‰å¤ä½é”®ä¸å¤Ÿã€‚
+echo [ÌáÊ¾] ¸ÕÉÕÂ¼ÍêÈç¹û¿´²»µ½Êı¾İ£¬ÇëÎïÀí°Î²åÒ»´Î USB¡£
+echo        HiBurn »á°ÑĞ¾Æ¬ÁôÔÚ bootloader£¬°´¸´Î»¼ü²»¹»¡£
 echo.
-echo æµè§ˆå™¨è¯·æ‰“å¼€ï¼š http://127.0.0.1:8080
-echo åœæ­¢çœ‹æ¿ï¼šåœ¨æœ¬çª—å£æŒ‰ Ctrl+C
+echo ä¯ÀÀÆ÷Çë´ò¿ª£º http://127.0.0.1:8080
+echo Í£Ö¹¿´°å£ºÔÚ±¾´°¿Ú°´ Ctrl+C
 echo ============================================================
 echo.
 
-rem ---- 4. å¯åŠ¨ ----
-rem set PYTHONIOENCODING=utf-8ï¼šä¸ä¸Šé¢çš„ chcp 65001 é…å¥—ï¼Œ
-rem   å¦åˆ™ Python æ‰“å° "â–¶" è¿™ç±»å­—ç¬¦æ—¶ä¼šå›  GBK ç¼–ä¸å‡ºæ¥è€Œå´©æºƒã€‚
-rem -ExecutionPolicy Bypass åªå¯¹æœ¬æ¬¡è°ƒç”¨ç”Ÿæ•ˆï¼Œä¸æ”¹ç³»ç»Ÿè®¾ç½®ã€‚
+rem ---- 4. Æô¶¯ ----
+rem  set PYTHONIOENCODING=utf-8 Óë chcp 65001 ÅäÌ×£º·ñÔò Python ´òÓ¡¼ıÍ·¡¢¶Ô¹´
+rem  ÕâÀà·ûºÅÊ±»áÒò GBK ±à²»³öÀ´¶ø±¨´í¡£´Ó chcp 65001 µ½ chcp 936 Ö®¼äÈ«ÊÇ´¿ ASCII¡£
 set PYTHONIOENCODING=utf-8
+chcp 65001 >nul
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" tools/dashboard_server.py --port 8080 --live
+chcp 936 >nul
 
 echo.
-echo çœ‹æ¿å·²åœæ­¢ã€‚
+echo ¿´°åÒÑÍ£Ö¹¡£
 pause

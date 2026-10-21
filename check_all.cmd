@@ -1,38 +1,58 @@
 @echo off
-chcp 65001 >nul
+rem ===========================================================================
+rem  Environment self-check launcher.
+rem  ENCODING: saved as GBK/ANSI (cp936) ON PURPOSE -- same reason as
+rem  start_dashboard.cmd (cmd.exe + chcp 65001 mis-parses Chinese batch files).
+rem ===========================================================================
+chcp 936 >nul
 cd /d "%~dp0"
-title çŽ¯å¢ƒè‡ªæ£€
+title »·¾³×Ô¼ì
+set PYTHONIOENCODING=utf-8
 
 echo ============================================================
-echo   çŽ¯å¢ƒè‡ªæ£€ + ä¸²å£ / æ¿å­çŠ¶æ€æ£€æŸ¥
+echo   »·¾³×Ô¼ì + ´®¿Ú / °å×Ó×´Ì¬¼ì²é
 echo ============================================================
 echo.
 
 if not exist ".venv\Scripts\python.exe" (
-    echo [X] æ‰¾ä¸åˆ° .venvï¼Œè¯·å…ˆæ‰§è¡Œï¼š python -m venv .venv
+    echo [X] ÕÒ²»µ½ .venv£¨¿çµçÄÔ¿½±´¹ýÀ´µÄ .venv »áÊ§Ð§£©¡£
+    echo     ÏÈÔËÐÐ start_dashboard.cmd£¬Ëü»á×Ô¶¯¼ì²â±¾»ú Python ²¢ÖØ½¨£»
+    echo     »òÊÖ¶¯Ö´ÐÐ£º
+    echo       python -m venv .venv
+    echo       .venv\Scripts\python.exe -m pip install -r requirements.txt
     pause
     exit /b 1
 )
 
-echo ---- 1. Python çŽ¯å¢ƒä¸Žä¾èµ– ----
+echo ---- 1. Python »·¾³ÓëÒÀÀµ ----
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" -Check
 echo.
 
-echo ---- 2. ä¸²å£åˆ—è¡¨ ----
-".venv\Scripts\python.exe" tools\serial_capture.py --list
+echo ---- 2. ´®¿ÚÁÐ±í ----
+call :run_py tools\serial_capture.py --list
 echo.
 
-echo ---- 3. æ ¡æ­£ DevEco çš„çƒ§å½•ç«¯å£ ----
-echo     æ¿å­æ¢ USB å£åŽ COM å·ä¼šå˜ï¼Œè€Œ DevEco é‡Œæ˜¯å†™æ­»çš„ã€‚
-echo     ç«¯å£å·ä¸å¯¹æ—¶ Upload ä¼šæŠ¥ "upload port is occupied"ï¼ˆæŠ¥é”™æœ‰è¯¯å¯¼æ€§ï¼‰ã€‚
+echo ---- 3. Ð£Õý DevEco µÄÉÕÂ¼¶Ë¿Ú ----
+echo     °å×Ó»» USB ¿Úºó COM ºÅ»á±ä£¬¶ø DevEco ÀïÊÇÐ´ËÀµÄ¡£
+echo     ¶Ë¿ÚºÅ²»¶ÔÊ± Upload »á±¨ "upload port is occupied"£¨±¨´íÓÐÎóµ¼ÐÔ£©¡£
 echo.
-".venv\Scripts\python.exe" tools\sync_com_port.py
+call :run_py tools\sync_com_port.py
 echo.
 
-echo ---- 4. æ¿å­å›ºä»¶ä¸€è‡´æ€§æ ¡éªŒï¼ˆçº¦ 15 ç§’ï¼‰----
-echo     æƒ³æŠ“å¼€æœºæ¨ªå¹… / è‡ªæ£€è¡Œï¼Œè¯·åœ¨è¿™ 15 ç§’å†…æŒ‰ä¸€ä¸‹æ¿å­å¤ä½é”®ã€‚
+echo ---- 4. °å×Ó¹Ì¼þÒ»ÖÂÐÔÐ£Ñé£¨Ô¼ 15 Ãë£©----
+echo     Ïë×¥¿ª»úºá·ù / ×Ô¼ìÐÐ£¬ÇëÔÚÕâ 15 ÃëÄÚ°´Ò»ÏÂ°å×Ó¸´Î»¼ü¡£
 echo.
-".venv\Scripts\python.exe" tools\check_firmware.py --port auto --duration 15
+call :run_py tools\check_firmware.py --port auto --duration 15
 echo.
 
 pause
+exit /b 0
+
+rem ---- ÏÂÃæÕâ¶ÎÓÃ 65001 ÅÜ Python£¨Python ÒªÊä³ö¶Ô¹´¡¢¼ýÍ·Ö®ÀàµÄ·ûºÅ£©£¬
+rem      ÅÜÍêÁ¢¿ÌÇÐ»Ø 936£»±¾¶ÎÄÚÈ«ÊÇ´¿ ASCII£¬²»»áÓÐ±àÂë´íÎ»ÎÊÌâ¡£----
+:run_py
+chcp 65001 >nul
+".venv\Scripts\python.exe" %*
+set "RUNPY_RC=%ERRORLEVEL%"
+chcp 936 >nul
+exit /b %RUNPY_RC%

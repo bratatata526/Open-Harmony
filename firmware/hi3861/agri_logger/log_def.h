@@ -57,6 +57,7 @@
 #define DOM_TASK     "A005"   /* 任务调度：超时、队列积压                     */
 #define DOM_COMM     "A006"   /* 通信：WiFi、MQTT 重连                       */
 #define DOM_FAULT    "A007"   /* 故障注入器（仅测试构建）                     */
+#define DOM_CRASH    "A008"   /* 系统异常：看门狗 / 死机（FAQ 第 3 章）        */
 
 /* ==========================================================================
  * 2. 字段 ID —— 对应 docs/02 §3.3
@@ -79,6 +80,11 @@ typedef enum {
     AGRI_F_QUEUE   = 14,  /* 消息队列长度                                 */
     AGRI_F_MISS    = 15,  /* 看门狗漏喂次数                               */
     AGRI_F_ZONE    = 16,  /* 逻辑设备编号 0=A 1=B ... 5=F（用于非首字段场景）*/
+    /* ---- 系统异常类专用（FAQ 第 3 章：看门狗 3.1 / 死机 3.2）---- */
+    AGRI_F_MCAUSE  = 17,  /* 机器异常原因码 mcause（FAQ 表3-5）             */
+    AGRI_F_ADDR    = 18,  /* 出错地址 / mtval（非法访问、踩内存时记录）      */
+    AGRI_F_CPU     = 19,  /* CPU 占用率 %（FAQ 3.1.4，>95 需让出 CPU）      */
+    AGRI_F_MEMFAIL = 20,  /* 内存池累计申请失败次数（FAQ 3.2.2.3.4）        */
 } agri_field_t;
 
 /* 故障码数值 —— 与 docs/02 §5.2 的 Fxxxx 一一对应 */
@@ -100,10 +106,18 @@ typedef enum {
 #define AGRI_FAULT_QUEUE_FULL        3004   /* F3004 */
 #define AGRI_FAULT_WDT_FEED_MISSED   3005   /* F3005 */
 #define AGRI_FAULT_HEAP_LOW          3006   /* F3006 */
+/* ---- 系统异常类（Hi3861 FAQ 第 3 章）---- */
+#define AGRI_FAULT_WDT_RESET         3007   /* F3007 看门狗超时复位（任务阻塞未喂狗） */
+#define AGRI_FAULT_ISR_BLOCK         3008   /* F3008 中断阻塞（ISR 中阻塞/中断中死机） */
+#define AGRI_FAULT_SYSTEM_CRASH      3009   /* F3009 系统死机（任务中/中断中死机）    */
+#define AGRI_FAULT_ILLEGAL_ACCESS    3010   /* F3010 非法内存访问（越界/踩内存）      */
+#define AGRI_FAULT_CPU_OVERLOAD      3011   /* F3011 CPU 占用率过高（>95%）          */
 #define AGRI_FAULT_ACTUATOR_TIMEOUT  4001   /* F4001 */
 #define AGRI_FAULT_IRRIGATION_STATE  4002   /* F4002 */
 #define AGRI_FAULT_BOOT              5001   /* F5001 */
 #define AGRI_FAULT_CONFIG_LOAD_FAIL  5002   /* F5002 */
+#define AGRI_FAULT_ABNORMAL_RESET    5003   /* F5003 异常复位（看门狗/死机后重启）    */
+#define AGRI_FAULT_WDT_CFG_INVALID   5004   /* F5004 看门狗超时配置非法（<6500ms）    */
 
 /* 错误码 —— 与 docs/02 §5.4 一一对应 */
 #define AGRI_CODE_NONE         0
@@ -123,6 +137,16 @@ typedef enum {
 #define AGRI_CODE_WDT_MISS      14
 #define AGRI_CODE_HEAP_LOW      15
 #define AGRI_CODE_CONFIG_FAIL   16
+/* ---- 系统异常类（FAQ 第 3 章）---- */
+#define AGRI_CODE_WDT_RESET     17   /* 看门狗超时复位（eid=0x3/0x4）           */
+#define AGRI_CODE_ISR_BLOCK     18   /* 中断中阻塞（中断里长时间不返回）         */
+#define AGRI_CODE_CPU_OVERLOAD  19   /* CPU 占用率 >95%                        */
+#define AGRI_CODE_CRASH_TASK    20   /* 任务中死机（eid=0x1，mcause 见字段17）   */
+#define AGRI_CODE_CRASH_ISR     21   /* 中断中死机（eid=0x2，mcause 见字段17）   */
+#define AGRI_CODE_BAD_ADDR      22   /* 非法地址访问（mtval 见字段18）           */
+#define AGRI_CODE_MEM_CORRUPT   23   /* 踩内存/越界写                           */
+#define AGRI_CODE_ABNORMAL_RESET 24  /* 异常复位（非正常上电/软复位）            */
+#define AGRI_CODE_WDT_CFG       25   /* 看门狗超时配置非法（<6500ms）           */
 #define AGRI_CODE_UNKNOWN       99
 
 /* ==========================================================================

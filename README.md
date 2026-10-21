@@ -18,7 +18,7 @@
 | 连续、周期性日志 | 每 5 秒一轮，6 个 zone 交错输出，天然形成"多设备日志流" |
 | 真实环境数据 | 板载 **SHT20**（真实温湿度）+ 板载 **AP3216C**（真实光强 ALS）；另可接 3 个外接传感器模块 |
 | 规范化日志 | 自建 `log_def.h` 宏输出 hilog 同构格式（`docs/02` 冻结规范） |
-| 异常场景 | 软件故障注入器（8 类场景、20 个故障码）+ **真实物理触发**（遮光、哈气、按键） |
+| 异常场景 | 软件故障注入器（**13 组场景、28 个故障码全覆盖** + 日志静默 / 丢包 / 乱序 / 截断 / 乱码）+ **真实物理触发**（遮光、哈气、按键） |
 
 **为什么砍掉 STM32 是对的**：
 
@@ -116,7 +116,7 @@
 | 文件 | 状态 | 说明 |
 |---|---|---|
 | `tools/serial_capture.py` | ✅ **已实现并验证** | **串口日志采集器**：自动发现 COM 口、断线重连、实时解析、级别过滤、落盘、退出时打印统计（解析率/行长/seq 连续性/到达间隔）。离线回放不需要 pyserial |
-| `tools/openharmony_log_sim.py` | ✅ **已实现并跑通** | 日志模拟器：6 个 zone、8 类故障注入、丢包/乱序/截断/乱码信道模拟、带 ground-truth 标注、格式与行长自检 |
+| `tools/openharmony_log_sim.py` | ✅ **已实现并跑通** | 日志模拟器：6 个 zone、**13 组故障注入（28 个故障码全覆盖）**、日志静默（`--silence-every/--silence-for`）、丢包/乱序/截断/乱码信道模拟、带 ground-truth 标注、格式与行长自检 |
 | `eval/dataset/d2_demo.log` | ✅ 已生成 | 1800 秒模拟日志（4475 行，148 次故障注入），可直接开始写解析器 |
 | `eval/dataset/d2_demo.gt.jsonl` | ✅ 已生成 | 对应的评测标注（标准答案），用于算召回率/误报率 |
 | `eval/dataset/noisy_demo.log` | ✅ 已生成 | 带信道噪声的版本（2% 丢行 + 1% 截断 + 1% 乱码），用来检验采集器健壮性 |
@@ -124,10 +124,10 @@
 **抓日志（第 2 步，硬件就绪后立刻做）**：
 
 ```powershell
-# 本项目的 Python 用仓库内的虚拟环境（路径全 ASCII，绕开中文用户名问题）
+# 本项目的 Python 用仓库内的虚拟环境
 # 首次先创建并装依赖（每次新开终端不需要重复）：
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install pyserial
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 
 # ① 环境自检（Python 版本 / pyserial / 串口 / 编码，一次看清）
 .venv\Scripts\python.exe tools/serial_capture.py --check-env
@@ -162,7 +162,7 @@ python -m venv .venv
 本项目使用**仓库内的虚拟环境** `.venv`：
 
 ```
-E:\Code\Harmony\.venv\Scripts\python.exe        （基于 Python 3.8.8 创建）
+<仓库根目录>\.venv\Scripts\python.exe           （用本机 Python 3.8+ 创建）
 ```
 
 **为什么用虚拟环境**（这是踩过坑之后的选择，四条理由都实打实）：
@@ -176,14 +176,24 @@ E:\Code\Harmony\.venv\Scripts\python.exe        （基于 Python 3.8.8 创建）
 
 > **本项目所在机器的背景**：默认账户名是中文（`某逗`），部分工具对中文路径不友好，所以 VSCode、Python 等软件都装在了另一账户 `moudou517` 下。但**跨账户的 `pip install` 会被 Windows 拒绝**，因此最终采用"仓库内虚拟环境"这个方案，它同时解决了路径共享、跨账户权限、中文路径三个问题。
 
+> ⚠️ **换电脑 / 把仓库拷给别人时必读**：`.venv` **不能跨电脑拷贝**。它内部记录了创建它的那个 Python 的绝对路径（`pyvenv.cfg` 里的 `home=`），还会带上原电脑编译好的 `.pyd`。换机后启动会报：
+>
+> ```
+> No Python at 'C:\Users\<原电脑用户名>\AppData\Local\Programs\Python\Python38\python.exe'
+> ```
+>
+> 处理办法（二选一）：
+> 1. **直接运行 `start_dashboard.cmd`**：它会自动找到本机 Python、删掉失效的 `.venv`、重建并装好 `requirements.txt` 里的依赖；
+> 2. 手动：`rmdir /s /q .venv`，再按上面三步重新创建。
+
 **每台电脑首次使用（克隆仓库后执行一次）**：
 
 ```powershell
 # 1) 创建虚拟环境（用本机任意 Python 3.8+ 都行）
 python -m venv .venv
 
-# 2) 装依赖
-.venv\Scripts\python.exe -m pip install pyserial
+# 2) 装依赖（串口采集、LLM 调用、报告模板、终端输出都要装）
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 
 # 3) 验证：Python 路径与 pyserial 位置应属于同一个 Python
 .venv\Scripts\python.exe tools/serial_capture.py --check-env
@@ -224,6 +234,21 @@ python tools/openharmony_log_sim.py --duration 1800 --seed 20260101 \
 python tools/openharmony_log_sim.py --speed 10
 ```
 
+**图形启动器（日常使用 / 现场演示，推荐）**：
+
+```powershell
+# 首次：创建桌面快捷方式（图标 = 像素扳手）
+powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
+```
+
+之后双击桌面上的「OpenHarmony 日志分析工具」→ **选端口 → 开始** 即可：
+它会后台起看板服务、就绪后**自动打开浏览器**；点 **停止** 或 **关窗口** 会停服务并**释放串口**。
+界面只有四样：端口 / 开发板（只读，当前仅 Hi3861）/ 开始 / 停止。
+详见 [docs/12-launcher.md](docs/12-launcher.md)。
+
+> 启动器只是"更好用的入口"，分析能力仍然全在下面这套 web 看板里 —— 两者是同一个服务，
+> 命令行方式（下面三种模式）继续保留，调试时更好用。
+
 **可视化看板怎么跑（三种模式，别搞混）**：
 
 ```bash
@@ -251,6 +276,14 @@ python tools/dashboard_server.py --port 8080 --live-sim
 > 拔掉板子/断电，6 秒内徽标变红 `OFFLINE`、日志流停止增长；
 > 插回去，5 秒退避后**自动重连**，日志继续。这一来一回本身就是最有力的证据。
 > 若换 USB 口导致 COM 号变化，点日志流右上角的**「重新连接」**（掉线后也会自动触发一次）。
+
+**实时模式下会自动出报告（默认开启）**：一旦检测到**新的异常窗口**，后台会自动调用 LLM 识别该异常，
+并生成**这一条异常专属的 `.md` 报告**（写入 `reports_live/`，文件名 `窗口号_异常名.md`），报告**标题下方
+第一行就是「摘要」**——一句话说清"哪个设备、什么现象"。不需要点按钮，也不需要浏览器开着。
+
+> 三道闸防止失控：① 只分析**已闭合**的窗口（还在增长的那个先不动）；② 同一窗口只出一份；
+> ③ 同一类异常 **180 秒**内不重复出报告。LLM 不可用 / 超预算时自动降级为规则引擎，
+> **报告照样生成**，只是摘要变成模板句。加 `--no-auto-analyze` 可关闭，回到"点按钮才出报告"。
 
 **按设备看（单设备视角）**：顶栏有一个**设备选择器**，选中某个棚后，
 KPI / 时间线 / 异常族 / 根因报告 / 日志流**全部只由这个棚的日志算出**。
@@ -281,6 +314,7 @@ KPI / 时间线 / 异常族 / 根因报告 / 日志流**全部只由这个棚的
 | [docs/09-troubleshooting-log.md](docs/09-troubleshooting-log.md) | **真机调试踩坑记录**（14 个实战验证过的坑 + 排查决策树） | **上机前必读** |
 | [docs/10-data-authenticity.md](docs/10-data-authenticity.md) | **数据真实性论证**（四层来源逐层标注、真实 vs 建模的边界、答辩逐字话术） | 答辩人 / 被质疑数据时 |
 | [docs/11-ppt-prompt-pack.md](docs/11-ppt-prompt-pack.md) | **PPT 提示词档案**（可复制的生成提示词 + 诚实进度对照表 + 红线清单 + 演示脚本） | 做汇报 PPT 时 |
+| [docs/12-launcher.md](docs/12-launcher.md) | **图形启动器**（选端口 → 开始 → 自动开看板；像素扳手图标、桌面快捷方式、关窗即停并释放串口） | 全体 / 现场演示 |
 | [docs/00-interface-handoff.md](docs/00-interface-handoff.md) | **接口交接文档**（B、C 同学从这里开始，含四条自检命令） | B / C |
 
 **推荐阅读顺序**：README → 01 → 02 →（按分工）03/04/05/06 → 07 → 08。

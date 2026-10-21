@@ -1,0 +1,17 @@
+﻿# OpenHarmony 日志智能聚合分析工具 —— Python 依赖清单
+#
+# 安装（在本仓库根目录执行，用仓库内虚拟环境）：
+#   python -m venv .venv
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# 国内下载慢时加镜像：
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 说明：start_dashboard.cmd / check_all.cmd 会自动读本文件，
+#       用于"换电脑后重建 .venv"和"补装缺失依赖"。
+
+pyserial>=3.5          # 串口采集（serial_capture.py / dashboard_server.py）
+openai<1.60            # LLM 根因分析（1.60+ 改了接口，本仓库按 1.x 早期 API 写的）
+PyYAML>=6.0            # 配置读取
+Jinja2>=3.0            # 报告模板渲染
+rich>=13.0             # 终端彩色输出
