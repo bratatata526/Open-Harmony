@@ -4,7 +4,6 @@
 >
 > **本文是环境配置与使用说明。** 环境搭建步骤参考《OpenHarmony 开发板实验指导书 Windows 版 V2.1.15》第 1 章「开发环境搭建」，并结合本仓库的实际目录、脚本与固件实现做了项目化整理；日志规范、算法、接口与前端细节见 [`docs/`](docs/)。
 >
-> 仓库：<https://github.com/bratatata526/Open-Harmony>
 
 ---
 
