@@ -16,13 +16,13 @@
 板载 SHT20（温度/湿度） + AP3216C（光照）
         │
         ▼
-firmware/hi3861/agri_logger/  ── 按《日志规范》输出单行日志（ASCII，≤128 字节）
+firmware/hi3861/agri_logger/  ── 按《日志规范》输出单行日志
         │  USB Type-C / CH340 / 115200
         ▼
 tools/serial_capture.py 或 dashboard 实时读串口
         │
         ▼
-agri_logger/parser → fields → windows（60s 窗口、5 信号加权打分）
+agri_logger/parser → fields → windows
         │
         ├─→ 异常族聚类 / 证据校验
         ├─→ 规则引擎（无 API Key 时）或 DeepSeek LLM（有 Key 时）
@@ -30,10 +30,10 @@ agri_logger/parser → fields → windows（60s 窗口、5 信号加权打分）
         └─→ 告警：控制台 / logs/alerts.jsonl / Webhook / 邮件
         │
         ▼
-web/index.html（原生 JS，零构建、离线可用） → http://127.0.0.1:8080
+web/index.html → http://127.0.0.1:8080
 ```
 
-### 1.2 已经实现的功能
+### 1.2 实现功能
 
 - **设备端**：单设备模式 / 六棚逻辑设备模式；板载 KEY 运行时开关故障注入；OLED 显示当前模式；开机横幅 + 数值转换自检。
 - **看板**：KPI、故障码分布、异常族聚合、日志密度时间线、实时日志流、大棚环境、根因报告、告警中心。
@@ -42,17 +42,7 @@ web/index.html（原生 JS，零构建、离线可用） → http://127.0.0.1:80
 - **告警**：控制台、JSONL 审计、钉钉/飞书/企业微信 Webhook、SMTP 邮件；去重/冷却/限流/分级；支持演练模式。
 - **交互**：设备聚焦、日志级别/模块/正则过滤、时间范围缩放、环境曲线点击筛选、报告阅读器、声音提示、布局复位。
 
-### 1.3 三种运行形态
-
-| 形态 | 数据来源 | 启动方式 | 能否生成设备报告 |
-|---|---|---|---|
-| **回放 replay** | `eval/dataset/d2_v2.log`（30 分钟、148 次故障注入、带标注）或 `--log` 指定 | `run.ps1 tools/dashboard_server.py --port 8080` | 不能（界面会提示） |
-| **实时真机 live** | 开发板串口（`--live`，默认自动发现 COM） | 启动器 / `start_dashboard.cmd` / `--live` | **能** |
-| **实时模拟器 live-sim** | `tools/openharmony_log_sim.py` 模拟日志 | `--live-sim` | 不能（模拟数据） |
-
-> 回放和模拟器用于算法演示与前端开发；**要生成"设备报告"必须接真机并处于 live 模式**，这样报告里的数据来源才能标注为真机串口。
-
-### 1.4 关于"一块板 = 6 个设备"
+### 1.3 关于"一块板 = 6 个设备"
 
 物理上只有 **1 个传感器节点**（板载 SHT20 + AP3216C）。`agri_logger_multi.c` 里的六棚模式是把同一份真实读数派生成 6 个逻辑大棚（固定偏置 + 热惯性），**基准值仍是真实传感器读数**；单设备模式（默认）则直接上报真实读数。两种模式的切换见 §7.3。
 
@@ -62,14 +52,12 @@ web/index.html（原生 JS，零构建、离线可用） → http://127.0.0.1:80
 
 | 类别 | 要求 |
 |---|---|
-| **开发板** | 华清远见 FS-Hi3861（Hi3861 核心板）；板载 SHT20 温湿度、AP3216C 光照、0.96" OLED、用户 KEY；USB Type-C **数据线**（不是只供电线） |
+| **开发板** | 华清远见 FS-Hi3861（Hi3861 核心板）；板载 SHT20 温湿度、AP3216C 光照、0.96" OLED、用户 KEY；USB Type-C **数据线** |
 | **PC** | Windows 10/11 x64；安装驱动/工具需要管理员权限；建议 ≥10 GB 空闲磁盘 |
 | **固件工具链** | VSCode **System x64**（课程资料中的 1.78.2 即可）、DevEco Device Tool **3.0.x**、Hi3861 SDK（课程资料，约 0.5 GB）、DevTools_Hi3861V100 工具链（约 3 GB）、CH340 串口驱动 |
 | **Python** | **3.8+ 64 位**（本项目实测 3.9.1）；安装在**全英文路径**，安装时勾选 **Add Python to PATH** |
 | **网络** | pip 可用（国内建议镜像）；DeepSeek API 可选；不联网也能跑回放和规则引擎 |
 | **可选账号** | DeepSeek API Key（LLM 根因）；SMTP 授权码（邮件告警）；钉钉/飞书/企业微信机器人 URL（Webhook） |
-
-> **不需要**：MQTT Broker、STM32、微信小程序。指导书第 1 章的 1.2 / 1.3 / 1.4 分别是 MQTT、STM32、小程序实验环境，本项目不涉及；代码里出现的 `F2001 MQTT 连接失败` 只是**日志故障码**，不会真的连 MQTT。
 
 ---
 
@@ -83,31 +71,27 @@ Open-Harmony/
 │  ├─ analyzer/              #   异常族聚类、证据校验、LLM/规则根因
 │  ├─ notifier/              #   控制台/文件/Webhook/邮件 四通道告警
 │  └─ ...
-├─ web/                      # 看板前端（index.html + 契约/sample，无构建步骤）
+├─ web/                      # 看板前端
 ├─ tools/                    # 启动器、采集、模拟器、固件同步、自检、诊断
-├─ firmware/                 # 固件源码 + SDK 集成文件（不随 SDK 提交）
+├─ firmware/                 # 固件源码 + SDK 集成文件
 ├─ docs/                     # 01~16 项目文档
 ├─ eval/                     # 回放日志与标注数据集
 ├─ reports/                  # 报告样例
-├─ reports_live/             # 真机实时报告（新生成的 *.md 不入库，保留历史样例）
+├─ reports_live/             # 真机实时报告
 ├─ reports_llm/              # 模拟器报告（样例入库）
 ├─ logs/                     # 采集/启动器/告警审计日志
 ├─ assets/                   # 启动器图标
-├─ hi3861_application/       # ★ 自备 Hi3861 SDK（约 0.5 GB，git 忽略）
-├─ .venv/                    # ★ 本地 Python 虚拟环境（git 忽略）
-└─ .env                      # ★ 本地密钥/告警配置（git 忽略）
+├─ hi3861_application/       # ★ 自备 Hi3861 SDK
+├─ .venv/                    # ★ 本地 Python 虚拟环境
+└─ .env                      # ★ 本地密钥/告警配置
 ```
-
-> `hi3861_application/`、`.venv/`、`.env` 都**不在仓库里**。前者是因为太大，后两者是因为跟本机/密钥绑定。新电脑按 §4、§5 重建即可。
-
 ---
 
-## 4. Python 看板环境（没有开发板也能先跑）
+## 4. Python 看板环境
 
 ### 4.1 安装 Python
 
 - 从 <https://www.python.org/downloads/windows/> 下载 **64 位** 安装包（建议 3.9 / 3.10；本项目实测 3.9.1）。
-- 安装路径保持**全英文、无空格**（例如 `C:\Python39`），勾选 **Add Python to PATH**。
 - 验证：
 
 ```powershell
@@ -143,7 +127,7 @@ copy .env.example .env
 notepad .env
 ```
 
-最少只需要填 `DEEPSEEK_API_KEY`（不填也能跑，报告会自动降级到规则引擎）：
+最少只需要填 `DEEPSEEK_API_KEY`（可选）：
 
 ```ini
 DEEPSEEK_API_KEY=sk-你的Key
@@ -153,7 +137,7 @@ DEEPSEEK_API_KEY=sk-你的Key
 # LLM_DAILY_BUDGET_CNY=5.0
 ```
 
-告警配置（邮件/Webhook）见 §7.2。`.env` 已被 `.gitignore` 忽略，**不要提交、不要截图外发**。
+告警配置（邮件/Webhook）见 §7.2。。
 
 ### 4.4 环境自检
 
@@ -167,9 +151,9 @@ DEEPSEEK_API_KEY=sk-你的Key
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-也可以直接用 `check_all.cmd`（它还会检查串口、DevEco 烧录口、固件一致性，但后两步需要板子）。
+也可以直接用 `check_all.cmd`。
 
-### 4.5 先跑回放模式（不需要板子）
+### 4.5 回放模式
 
 ```powershell
 .\run.ps1 tools/dashboard_server.py --port 8080
@@ -178,7 +162,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 浏览器打开 <http://127.0.0.1:8080>。默认自动挑选：
 
 1. `eval/dataset/d2_v2.log`（优先，30 分钟、148 次故障注入、带标注）
-2. `logs/multi.log`（真机采集）
+2. `logs/multi.log`
 3. `eval/dataset/d2_demo.log`
 
 指定其他文件：
@@ -201,7 +185,7 @@ powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
 
 ## 5. 开发板固件环境（按指导书第 1 章）
 
-> 本节对应指导书 **1.1 OpenHarmony 环境搭建**（1.1.1～1.1.9）。如果你只跑 Python 看板，可以跳过本节，直接看 §6。
+> 本节对应指导书 **1.1 OpenHarmony 环境搭建**（1.1.1～1.1.9）。如果只跑 Python 看板，可以跳过本节，直接看 §6。
 
 ### 5.1 安装 VSCode
 
@@ -218,35 +202,13 @@ powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
 
 ### 5.3 获取 Hi3861 SDK
 
-**不要直接使用 Gitee 上最新代码**（在线工程经常变化，可能与课程实验不兼容）。使用课程资料中的：
+使用资料中的：hi3861_hdu_iot_application.rar
 
-```text
-\程序源码\hi3861_hdu_iot_application.rar
-```
-
-解压要求：
-
-- 解压到**全英文、无空格、路径尽量短**的目录（例如 `D:\Hi3861\`）；
-- 整个路径不超过 **260 个字符**（Windows 限制），否则编译会报路径过长；
-- **推荐**把 SDK 放到本仓库根目录并命名为 `hi3861_application`，这样 `tools/sync_firmware.py`、`tools/sync_com_port.py` 可以直接工作：
-
-```text
-<仓库根目录>\
-├─ firmware\
-├─ tools\
-├─ web\
-└─ hi3861_application\      ← SDK 解压到这里
-   ├─ src\
-   ├─ .deveco\
-   └─ ...
-```
-
-> SDK 约 0.5 GB、2.6 万个文件；`Tool/` 工具链约 3 GB。它们**都不入 Git**，新电脑需要重新获取/解压。
 
 ### 5.4 导入 SDK 到 DevEco
 
 1. VSCode 打开后，进入 **DevEco Device Tool 主页** → **导入工程**。
-2. 选择 `hi3861_application` 目录（zip 解压后可能叫 `hi3861_hdu_iot_application-master`）。
+2. 选择 `hi3861_application` 目录。
 3. 后续弹窗：**SOC = Hi3861**，**开发板 = hi3861**，**框架 = hb**，点击导入。
 4. 导入成功后，后续可从 DevEco 主页直接打开该工程。
 
@@ -258,9 +220,6 @@ powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
 2. 在 `hi3861` 下找到 **`compiler_bin_path`**，指向你解压的 **`DevTools_Hi3861V100_v1.0`** 目录（通常在课程资料的 `Tool\` 下）。
 3. 同理检查 `.deveco/deveco.ini` 中的 `compiler_bin_path`：
 
-```ini
-compiler_bin_path = D:\Hi3861\Tool\DevTools_Hi3861V100_v1.0
-```
 
 > 这是**每台电脑都不同**的绝对路径。仓库里的 `deveco.ini` 只是模板，照抄别人的路径一定编译失败。
 
@@ -478,16 +437,15 @@ powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
 
 > `run.ps1`、启动器、看板服务启动时都会自动加载 `.env`。启动横幅会打印 `🤖 LLM 可用（deepseek-flash）` 或 `不可用 → 规则引擎降级`；没有 Key 不影响采集/解析/看板。
 
-### 7.2 `.env`：告警（邮件默认清空，需要时自己填）
+### 7.2 `.env`：告警（需自己填写）
 
-> ⚠️ **邮件通道默认关闭，配置项留空。** 请填成你自己的配置后再把 `ALERT_EMAIL_ENABLED` 改成 `1`；
-> 真实邮箱地址/授权码只留在本机 `.env`，**不要写进 README、代码，也不要提交到 Git**。
+> 请填成你自己的配置后再把 `ALERT_EMAIL_ENABLED` 改成 `1`；
 
 ```ini
 # 总开关与策略
 ALERT_ENABLED=1
-ALERT_MIN_SEVERITY=P2      # P0 最严重；低于此级别只写审计文件
-ALERT_DRY_RUN=0            # 1 = 演练，不真发
+ALERT_MIN_SEVERITY=P2      
+ALERT_DRY_RUN=0            
 ALERT_COOLDOWN_S=180
 ALERT_MAX_PER_HOUR=12
 
@@ -496,19 +454,19 @@ ALERT_EMAIL_ENABLED=0
 SMTP_HOST=
 SMTP_PORT=465
 SMTP_SECURITY=ssl
-SMTP_USER=
-SMTP_PASSWORD=
-ALERT_EMAIL_FROM=
-ALERT_EMAIL_TO=
+SMTP_USER=你的邮箱
+SMTP_PASSWORD=你的授权码
+ALERT_EMAIL_FROM=你的邮箱
+ALERT_EMAIL_TO=收件人
 
 # Webhook（钉钉/飞书/企业微信/自建）
 ALERT_WEBHOOK_URL=
 # ALERT_WEBHOOK_KIND=auto    # auto | dingtalk | feishu | wecom | generic
 ```
 
-**填写提醒（邮件）**：
+**邮件填写指导**：
 
-| 配置项 | 填什么 |
+| 配置项 | 内容 |
 |---|---|
 | `SMTP_HOST` | QQ 邮箱填 `smtp.qq.com`，163 填 `smtp.163.com` |
 | `SMTP_PORT` / `SMTP_SECURITY` | QQ/163 一般 `465` + `ssl` |
@@ -520,7 +478,7 @@ ALERT_WEBHOOK_URL=
 
 - 填好后保存，在告警中心点「测试邮箱通道」验证；不需要等真实故障。
 - 邮件失败会自动退避 120 秒；手动点「测试邮箱通道」会强制重试，不被退避挡住。
-- Webhook 按 URL 自动识别钉钉/飞书/企业微信的负载格式，并检查 HTTP 200 里的 `errcode/code`；**暂不支持钉钉/飞书的"加签"**，请用自定义关键词或 IP 白名单。
+- Webhook 按 URL 自动识别钉钉/飞书/企业微信的负载格式，并检查 HTTP 200 里的 `errcode/code`；请用自定义关键词或 IP 白名单。
 - 配置完可在看板告警中心点「测试邮箱通道 / 测试Webhook」验证，不必等故障。
 - 命令行体检：`.venv\Scripts\python.exe -m agri_logger.notifier --show-config`；只测邮件：`--email-only`；演练：`--dry-run`。
 
@@ -533,8 +491,7 @@ ALERT_WEBHOOK_URL=
 | `SINGLE_DEVICE_MODE` | `1` | `1` = 单设备，直接上报板载真实读数；`0` = 六棚逻辑设备（同一真实基准派生 6 个 zone） |
 | `FAULT_INJECT_INTERVAL` | `20` | 每隔多少轮注入一次故障；演示可调 2~3，正式跑 20~30，负样本设 0 |
 
-- 板载 **KEY（GPIO_14）** 运行时切换故障注入：开机默认 `FAULT:OFF`（纯真实数据），按一下 `FAULT:ON`，再按一下关闭；OLED 第 1 行同步显示。
-- 注入故障带设备号 `z=A`；真实硬件故障是 `z=-`，日志里可区分。
+- 板载 **KEY（GPIO_14）** 运行时切换故障注入：开机默认 `FAULT:OFF`，按一下 `FAULT:ON`，再按一下关闭；OLED 第 1 行同步显示。
 - 改日志格式/字段顺序/时基后，务必把开机横幅的 `FW=v2.8` 版本号 +1，并同步 `tools/check_firmware.py` 的期望值。
 - 详细固件说明见 [`firmware/README.md`](firmware/README.md) 与 [`docs/04-firmware.md`](docs/04-firmware.md)。
 
@@ -544,9 +501,9 @@ ALERT_WEBHOOK_URL=
 
 | 键 | 说明 |
 |---|---|
-| `upload_port` / `monitor_port` | 板子实际 COM 号（换 USB 口会变） |
-| `upload_speed` | 921600（课程板默认） |
-| `compiler_bin_path` | `DevTools_Hi3861V100_v1.0` 的绝对路径，每台电脑不同 |
+| `upload_port` / `monitor_port` | 实际 COM 号 |
+| `upload_speed` | 921600 |
+| `compiler_bin_path` | `DevTools_Hi3861V100_v1.0` 的绝对路径|
 | `board_frameworks.hb.build.product` | `wifiiot_hispark_pegasus@hisilicon` |
 
 ---
@@ -579,38 +536,12 @@ ALERT_WEBHOOK_URL=
 .venv\Scripts\python.exe -m agri_logger.notifier --email-only
 .venv\Scripts\python.exe -m agri_logger.notifier --dry-run
 
-# 密钥扫描（提交前建议跑）
+# 密钥扫描
 .venv\Scripts\python.exe tools\secret_scan.py --tracked
 ```
 
----
 
-## 9. 常见问题
-
-| 现象 | 原因 / 处理 |
-|---|---|
-| 双击快捷方式没反应 | 看 `logs/launcher.log`；改用 `launcher.cmd`（带控制台）运行一次，报错会打印出来；快捷方式路径失效就重跑 `tools\make_shortcut.ps1` |
-| `No Python at 'C:\Users\...\python.exe'` | `.venv` 是从别的电脑拷来的，已失效。删掉 `.venv`，运行 `start_dashboard.cmd` 自动重建，或按 §4.2 手工重建 |
-| `ModuleNotFoundError: No module named 'serial'` | 依赖没装齐：`.venv\Scripts\python.exe -m pip install -r requirements.txt` |
-| 设备管理器没有 CH340 / 串口列表为空 | 装 `CH341SER.EXE`；换一条**数据线**；换 USB 口后点【刷新】；用 `serial_capture.py --list` 确认 |
-| 烧录报 `upload port is occupied` | ① 先关 DevEco Monitor / 看板 / `serial_capture.py`；② 端口号可能已变（`sync_com_port.py`）；③ 上一份看板留下孤儿子进程，重启电脑或结束 `python.exe` |
-| 烧录成功但串口没日志 | **物理拔插一次 USB**（HiBurn 停在 bootloader）；按复位键；确认波特率 115200；跑 `check_firmware.py --port auto` |
-| 看板一直「等待数据」 | 串口号选错 / 被 Monitor 占用 / 板子没复位。启动器状态条会直接给出原因；也可先 `serial_capture --monitor` 验证物理链路 |
-| 编译报 `undefined reference to AP3216C_Init` 等 | `BUILD.gn` 的 `sources` 没列出对应 BSP 驱动；用回 `firmware/hi3861/agri_logger/BUILD.gn`，不要手删 |
-| `compiler_bin_path` 无效 / 编译工具找不到 | 改 `deveco.ini` 或 DevEco 工程配置，指向自己的 `DevTools_Hi3861V100_v1.0`，不要照抄别人的 `E:\Code\...` |
-| 路径过长 / 中文路径导致编译失败 | SDK 解压到短英文根目录（如 `D:\Hi3861\`）；Python 也装全英文路径；整个路径 <260 字符 |
-| 8080 被占用 | 用 `netstat -ano` 找到监听 8080 的 PID 并结束进程，或改用 `--port 8081` |
-| LLM 一直不可用 | `.env` 没填 `DEEPSEEK_API_KEY` 或网络不通；看启动横幅；没有 Key 会自动用规则引擎，不影响主流程 |
-| 报告按钮提示"无法生成设备报告" | 当前是回放或模拟器模式；接真机后用 `--live` 启动（启动器默认就是 live） |
-| 邮件收不到 | ① `SMTP_PASSWORD` 填的是**授权码**不是登录密码；② 查垃圾邮件/广告邮件；③ 校园网可能封 465，改用 Webhook；④ 告警中心点「测试邮箱通道」看具体错误 |
-| 看板生成报告后没有告警 | 检查 `ALERT_MIN_SEVERITY`（P3 只写审计文件）、`ALERT_ENABLED`、`ALERT_DRY_RUN`；看 `logs/alerts.jsonl` 和告警中心「策略跳过」 |
-| 中文显示乱码 | 固件日志本身是 ASCII；终端乱码时把控制台/串口助手编码设为 UTF-8 或 GBK 对应项，波特率 115200 |
-
-更多真机踩坑记录见 [`docs/09-troubleshooting-log.md`](docs/09-troubleshooting-log.md)。
-
----
-
-## 10. 文档地图
+## 9. 文档地图
 
 | 文档 | 内容 |
 |---|---|
@@ -632,18 +563,7 @@ ALERT_WEBHOOK_URL=
 
 ---
 
-## 11. 数据口径与注意事项
-
-- **真实读数**：温度/湿度来自板载 SHT20，光照来自板载 AP3216C；环境值不做人工伪造。
-- **六棚**：6 个 zone 是同一真实基准派生出的逻辑设备，派生的是棚间差异，不是 6 份独立传感器数据。
-- **故障注入**：仅在按 KEY 后开启，日志带 `z=A`；关闭时设备端不产生任何注入日志。演示时建议"先展示干净状态，再按 KEY 展示故障识别"。
-- **报告来源**：真机报告在 `reports_live/`，模拟器报告在 `reports_llm/`；界面和报告正文都会标注数据来源与引擎，避免把模拟数据当真机结论。
-- **密钥**：`.env` 已被 `.gitignore` 忽略；提交前可跑 `tools/secret_scan.py --tracked`。SMTP 授权码/DeepSeek Key 不要写进代码或 README。
-- **SDK**：`hi3861_application/` 不入库；换电脑需要重新获取 SDK 并按 §5 集成。`firmware/` 是固件的版本源头，改固件请改 `firmware/` 再 `sync_firmware.py` 部署到 SDK。
-
----
-
-## 12. 参考
+## 10. 参考
 
 - 《OpenHarmony 开发板实验指导书 Windows 版 V2.1.15》第 1 章「开发环境搭建」（VSCode、DevEco Device Tool、SDK、编译、烧录、串口打印），第 5 章「常见问题」。
 - 项目内：[`docs/15-data-formats.md`](docs/15-data-formats.md)（日志/报告格式）、[`docs/14-api-interface-spec.md`](docs/14-api-interface-spec.md)（接口契约）、[`docs/16-frontend-dev-guide.md`](docs/16-frontend-dev-guide.md)（前端接入）。
