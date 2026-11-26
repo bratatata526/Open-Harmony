@@ -198,10 +198,19 @@ def error_phrase(code: int) -> str:
 
 
 def format_physical(fid: int, raw: int) -> str:
-    """把原始值格式化成带单位的可读形式，如 (2, 281) → '28.1℃'"""
+    """把原始值格式化成可读形式，如 (2, 281) → '28.1℃'
+
+    ★ 状态机字段（11）要还原成文字而不是裸数字：
+      日志里是 `11 3`，`physical["state"]` 应该是 `"degraded"` 而不是 `"3"`。
+      踩过的坑：STATE_NAMES 定义了却没人用，前端拿到 `physical.state === "3"`
+      只能显示一个数字，看板上就是"状态: 3" —— 没人知道 3 是什么。
+      （docs/02 §4.3 与 docs/14 §2.3 都写的是"查表"，代码必须与文档一致。）
+    """
     fd = FIELDS.get(fid)
     if fd is None:
         return str(raw)
+    if fid == 11:                                  # state → 状态机文字
+        return STATE_NAMES.get(raw, str(raw))
     if fd.scale == 1:
         val = str(raw)
     else:

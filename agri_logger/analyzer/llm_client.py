@@ -83,7 +83,8 @@ class LLMClient:
                  thinking: bool = True,
                  reasoning_effort: str = "high",
                  budget_cny_per_day: float = 5.0,
-                 enabled: bool = True):
+                 enabled: bool = True,
+                 max_tokens_cap: int = 8000):
         self.model = model
         self.base_url = base_url
         self.timeout_s = timeout_s
@@ -93,6 +94,8 @@ class LLMClient:
         self.reasoning_effort = reasoning_effort
         self.budget = budget_cny_per_day
         self.enabled = enabled
+        # 截断重试的 max_tokens 上限（见 call_json 里的截断分支）
+        self.max_tokens_cap = max(1000, int(max_tokens_cap))
 
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -209,11 +212,32 @@ class LLMClient:
                 return data, u
 
             except json.JSONDecodeError as e:
-                log.warning("[%s] JSON 解析失败（%s），附加修正提示重试", tag, e)
-                messages = messages + [{
-                    "role": "user",
-                    "content": "上次输出不是合法 JSON。请只输出 JSON，不要任何解释文字、不要 markdown 代码块。"
-                }]
+                # ★ 区分两种"解析失败"，它们的修法完全相反：
+                #   ① 被【截断】：输出还没写完就到 max_tokens 了（报文里有
+                #      "Unterminated string"/"Expecting ',' delimiter"）。
+                #      再给同样的 max_tokens 重试 100 次也是同样的结果 ——
+                #      必须【加大 max_tokens】才有意义。
+                #   ② 格式错（模型啰嗦地加了说明文字）：靠追加修正提示重试。
+                # 踩过的坑：L2 提示词新增字段后输出变长，2500 不够，
+                # 三次重试全部撞在截断上 → 静默降级到规则引擎，
+                # 日志里只看到"JSON 解析失败"，很容易误判成模型不会输出 JSON。
+                msg = str(e)
+                truncated = ("Unterminated" in msg or "Expecting" in msg
+                             or "Invalid control character" in msg)
+                if truncated and max_tokens < self.max_tokens_cap:
+                    new_max = min(self.max_tokens_cap, int(max_tokens * 1.6) + 200)
+                    log.warning(
+                        "[%s] 输出疑似被截断（%s）。max_tokens %d → %d 后重试",
+                        tag, msg, max_tokens, new_max)
+                    max_tokens = new_max
+                else:
+                    log.warning("[%s] JSON 格式不合规（%s），附加修正提示重试", tag, msg)
+                    messages = messages + [{
+                        "role": "user",
+                        "content": ("上次输出不是合法 JSON，或写到了 max_tokens 上限被截断。"
+                                    "请只输出一个完整的 JSON 对象，不要任何解释文字、"
+                                    "不要 markdown 代码块，并注意把每个字符串都闭合。")
+                    }]
                 time.sleep(delay); delay *= 2
             except Exception as e:                              # noqa: BLE001
                 name = type(e).__name__

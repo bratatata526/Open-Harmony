@@ -1,0 +1,34 @@
+{
+  "_说明": "web/samples/ 下是【真实后端】返回的原始响应，供前端在没有 Python 后端时离线开发。字段与 docs/14-api-interface-spec.md 完全一致。",
+  "capturedAt": "2026-11-17",
+  "backendBaseCommit": "856e2e9",
+  "capturedFrom": {
+    "replay": "tools/dashboard_server.py --log eval/dataset/d2_v2.log（回放模式，4475 行 / 30 窗口 / 24 个异常窗口）",
+    "live": "tools/dashboard_server.py --live-sim（实时模式，数据源=模拟器；无开发板也能复现）"
+  },
+  "files": [
+    { "file": "meta.json",            "endpoint": "GET /api/meta",              "mode": "replay", "说明": "概览 + 运行形态 + 告警通道状态" },
+    { "file": "meta-live.json",       "endpoint": "GET /api/meta",              "mode": "live",   "说明": "实时模式下的 meta（live 字段齐全、mode=live）" },
+    { "file": "summary.json",         "endpoint": "GET /api/summary",           "mode": "replay", "说明": "级别/模块/设备/故障码分布" },
+    { "file": "timeline.json",        "endpoint": "GET /api/timeline",          "mode": "replay", "说明": "时间线（含 step 桶宽，注意不是每秒一个点）" },
+    { "file": "zones.json",           "endpoint": "GET /api/zones",             "mode": "replay", "说明": "环境曲线，含 null 断点" },
+    { "file": "families.json",        "endpoint": "GET /api/families",          "mode": "replay", "说明": "异常族（智能聚合结果）" },
+    { "file": "windows.json",         "endpoint": "GET /api/windows",           "mode": "replay", "说明": "窗口列表与异常分" },
+    { "file": "logs.json",            "endpoint": "GET /api/logs?limit=6",      "mode": "replay", "说明": "日志明细（已截取 6 条）" },
+    { "file": "devices.json",         "endpoint": "GET /api/devices",           "mode": "replay", "说明": "设备选择器数据" },
+    { "file": "reports.json",         "endpoint": "GET /api/reports",           "mode": "replay", "说明": "报告列表（含 source_kind 配色依据）" },
+    { "file": "report.json",          "endpoint": "GET /api/report?name=...",   "mode": "replay", "说明": "单份报告的 Markdown 原文（LLM 引擎生成）" },
+    { "file": "analyze-status.json",  "endpoint": "GET /api/analyze?action=status", "mode": "replay", "说明": "分析进度/结果（含 log 进度行）" },
+    { "file": "alerts.json",          "endpoint": "GET /api/alerts?limit=20",   "mode": "replay", "说明": "告警状态 + 历史（含一条 LLM 引擎的真实告警）" },
+    { "file": "live-status.json",     "endpoint": "GET /api/live/status",       "mode": "live",   "说明": "实时数据源状态（sim=true，界面必须标注）" },
+    { "file": "live-logs.json",       "endpoint": "GET /api/live/logs?since=0", "mode": "live",   "说明": "实时增量日志（含 next/epoch/reset 三个游标字段）" }
+  ],
+  "missing": [
+    { "endpoint": "GET /api/live/reconnect", "reason": "会真的重启采集进程，不适合做成样例" },
+    { "endpoint": "GET /api/analyze",        "reason": "会触发真实 LLM 调用/写报告，不适合做成样例；用 analyze-status.json 模拟其结果" },
+    { "endpoint": "GET /api/alerts/test",    "reason": "会真的发邮件/发 Webhook，不能做成样例" },
+    { "endpoint": "GET /api/alerts/reload",  "reason": "动作型接口，无数据可看" },
+    { "endpoint": "GET /api/shutdown",       "reason": "会关掉后端，绝对不能做成样例" }
+  ],
+  "用法": "把 web/api-contract.js 的 dataSource.mode 设为 'mock' 即可全程离线开发；设 'auto' 则优先真实后端、失败自动回落样例。"
+}

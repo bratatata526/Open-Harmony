@@ -392,7 +392,8 @@ RE_HILOG = re.compile(
     r"(?P<msg>.*)$"
 )
 
-# 扩展位：非 OpenHarmony 设备（预留，架构开放性的体现）
+# 扩展位：非 OpenHarmony 设备前缀（历史扩展格式。本项目只有一块板、单一日志流，不产生这类行；
+# 正则保留是为了旧数据与测试样例仍可解析，不影响真机与模拟器的格式同构）
 RE_MCU = re.compile(
     r"^\[STM32\]\s+(?P<ts>\d+)\s+(?P<level>[DIWEF])\s+"
     r"(?P<tag>[A-Za-z][A-Za-z0-9_]{0,30}):\s*(?P<msg>.*)$"

@@ -18,7 +18,8 @@ echo [待推送的提交]
 git log --oneline -1
 echo.
 echo [远程仓库]
-git remote get-url origin
+for /f "delims=" %%u in ('git remote get-url origin') do set "REPO_URL=%%u"
+echo %REPO_URL%
 echo.
 
 echo ------------------------------------------------------------
@@ -78,7 +79,7 @@ echo ============================================================
 echo   [OK] 推送成功
 echo ============================================================
 echo.
-echo   仓库地址： https://github.com/bratatata526/Open-Harmony
+echo   仓库地址： %REPO_URL%
 echo.
 echo   队友克隆命令：
 echo       git clone https://github.com/bratatata526/Open-Harmony.git

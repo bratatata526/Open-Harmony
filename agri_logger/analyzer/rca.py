@@ -38,6 +38,7 @@ from typing import Optional
 from ..parser.parser import LogRecord
 from ..parser import fields as F
 from ..pipeline.windows import WindowStats
+from . import summary as S
 from .llm_client import LLMClient, Usage
 
 log = logging.getLogger(__name__)
@@ -135,12 +136,27 @@ SYSTEM_L2 = """你是 OpenHarmony 系统运维专家，负责输出根因分析�
 {
   "title": "报告标题（≤30字，含 zone 与现象）",
   "severity": "P0|P1|P2|P3",
+  "alert_summary": "★告警摘要（≤60字，见下方严格要求）",
   "symptom": "现象：客观描述发生了什么，含时间与设备",
   "suspected_root_cause": "疑似根因：给出因果链推理，说明为什么是这个原因而不是别的",
   "impact": "影响：影响了哪些功能、多少设备、数据是否丢失",
   "action": "处置建议：分【立即】【短期】【长期】三档，可执行",
   "confidence": 0.0
 }
+
+【alert_summary 的严格要求 —— 这段文字会直接进邮件主题与手机通知，按格式写】
+句式固定：检测到 <设备> 在 <地址> 处 <发生了什么>，疑似 <最可能的原因>。
+· 一句话说完，不分句、不换行、不带 Markdown、不用"建议""请"这类词。
+· 必须写清三件事：哪台设备、出了什么事、大概为什么。
+· 地址只在证据里【真有】的时候才写：证据里有 addr(字段18) 且是非零出错地址，
+  才写"在地址 0x____ 处"，并用括号补上 mcause(字段17) 的含义（如"非法指令"）。
+  没有就整段省略 —— **绝对不要编一个地址**。
+· 日志里没有任务名字段，所以不要写 "TaskA"；要指代代码位置就用模块 tag
+  （AgriHealth / AgriSensor / AgriCrash）。
+· 示例（证据确实含 addr=4096、mcause=2、F3002/F3009）：
+  "检测到设备 A 在地址 0x1000 处发生任务栈溢出（F3002，mcause 非法指令），疑似递归过深或栈设置过小。"
+· 示例（证据里没有地址）：
+  "检测到设备 A 出现看门狗即将触发（F3005），疑似阻塞导致进不了空闲任务喂狗。"
 
 【领域知识（用于推理，勿直接照抄）】
 - 单总线/传感器读失败常见原因：上拉电阻缺失、高优先级任务打断时序、线缆过长、供电不足
@@ -358,14 +374,9 @@ class Report:
             s = (self.analysis.summary or "").strip()
             if s:
                 return s
-        zones = "、".join(z for z in w.zones if z and z != "-") or "全局"
-        if w.fault_count:
-            tag, cnt = w.fault_count.most_common(1)[0]
-            return ("检测到 %s 在 %ds~%ds 出现%s（%s）共 %d 次，窗口内 %d 条日志。"
-                    % (zones, w.start_ts, w.end_ts, F.fault_name(int(tag[1:])),
-                       tag, cnt, w.line_count))
-        return ("检测到 %s 窗口异常（%s）。"
-                % (zones, "；".join(w.anomaly_reasons) or "异常分数越界"))
+        # 规则降级：走与告警邮件【完全同一份】措辞逻辑（analyzer/summary.py），
+        # 避免"报告说 A、邮件说 B"这种自相矛盾。
+        return S.describe_window(self.window, self.analysis.display_name)
 
     def to_markdown(self, validator: "EvidenceValidator") -> str:
         a = self.analysis
@@ -400,7 +411,10 @@ class Report:
             f"| 本族出现 | {self.family_count} 个窗口（本次分析范围） |",
             f"| 时间范围 | {self.window.start_ts:.0f}s ~ {self.window.end_ts:.0f}s"
             f"（{self.window.duration_s:.0f}s，设备上电后的相对时间） |",
-            f"| 涉及设备 | {'、'.join(self.window.zones) or '全局'} |",
+            # ★ 过滤掉 "-"：它是"整机级"日志的标记（健康检查/启动/模式上报），
+            #   不是一台设备。不过滤就会在报告里写出「涉及设备 | -、A、B」这种
+            #   让人看不懂的一行，而且和告警里的 device（已过滤成"全部 6 个设备"）不一致。
+            f"| 涉及设备 | {'、'.join(z for z in self.window.zones if z and z != '-') or '全局'} |",
             f"| 日志行数 | {self.window.line_count}（E={self.window.err_count} W={self.window.warn_count}） |",
             f"| 置信度 | {a.confidence * 100:.0f}% |",
             f"| 分析引擎 | {badge}"
@@ -547,7 +561,10 @@ class AnomalyAnalyzer:
                 stats=w.to_prompt_text(), n=len(ev), evidence=evidence_text,
                 related=analysis.cluster_key)},
         ]
-        data, usage = self.llm.call_json(messages, tag=f"L2-{w.window_id}", max_tokens=2500)
+        # L2 的输出比 L1 长得多（title/symptom/根因/影响/处置/alert_summary 六个字段，
+        # 而且处置建议要分三档写）。加上新增的 alert_summary 之后 2500 实测会被截断，
+        # 所以给到 4000；即使还不够，call_json 的"截断自动加倍"也会兜住。
+        data, usage = self.llm.call_json(messages, tag=f"L2-{w.window_id}", max_tokens=4000)
         if data is None:
             return self._rule_rca(w), usage
         return data, usage
@@ -581,24 +598,13 @@ class AnomalyAnalyzer:
             confidence=0.5, mode="rule")
 
     def _rule_rca(self, w: WindowStats) -> dict:
-        """降级根因：基于故障码字典的因果链识别"""
+        """降级根因：基于故障码字典的因果链识别
+
+        因果链的映射表统一放在 summary.cause_chain()：告警邮件、报告摘要、
+        规则降级结论三处共用一份，改一处三处同步，不会互相打脸。
+        """
         codes = {int(t[1:]) for t in w.fault_count}
-        chain = []
-        if {3006, 3001} & codes:
-            chain.append("内存类故障")
-        if 2002 in codes:
-            chain.append("上报超时")
-        if {1002, 1004, 1001, 1006} & codes:
-            chain.append("传感器读取异常")
-        if {3003, 3004} & codes:
-            chain.append("任务调度异常")
-        # ---- 系统异常类（FAQ 第 3 章）：CPU 过载 → 看门狗/崩溃 → 异常复位 ----
-        if 3011 in codes:
-            chain.append("CPU 占用率过高")
-        if {3007, 3008, 3009, 3010} & codes:
-            chain.append("看门狗/系统崩溃")
-        if 5003 in codes:
-            chain.append("设备异常复位")
+        chain = S.cause_chain(codes)
 
         if len(chain) > 1:
             cause = ("跨模块因果链：" + " → ".join(chain) +
@@ -611,6 +617,9 @@ class AnomalyAnalyzer:
         return {
             "title": f"{w.window_id} 异常（规则引擎判定）",
             "severity": "P1" if w.err_count else "P2",
+            # ★ 告警摘要与 symptom 分开：alert_summary 是"手机通知级"的一句话，
+            #   symptom 保留完整信号列表给报告正文用。两者都走同一份措辞逻辑。
+            "alert_summary": S.one_line_alert(w),
             "symptom": "；".join(w.anomaly_reasons) or "（无）",
             "suspected_root_cause": cause,
             "impact": f"影响设备 {', '.join(w.zones) or '全局'}，窗口内 {w.line_count} 行日志。",

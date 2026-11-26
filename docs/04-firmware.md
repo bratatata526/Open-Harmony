@@ -8,7 +8,7 @@
 > - `Tool/CH340/` —— USB 转串口驱动
 > - `Tool/mosquitto-1.6.9-install-windows-x64.exe` —— MQTT Broker
 > - `Tool/paho.mqtt.embedded-c-master.zip` —— 嵌入式 MQTT C 客户端库
-> - `Tool/MDK5/`、`Tool/ST-Link/`、`Tool/en.stm32cubemx_v5-6-0.zip` —— STM32 开发全套
+> - `Tool/MDK5/`、`Tool/ST-Link/`、`Tool/en.stm32cubemx_v5-6-0.zip` —— 工作区附带的 STM32 工具链（**本项目不使用**，只是把工作区内容列全）
 > - `OpenHarmony开发板实验指导书Windows版v2.1.15(1).pdf` —— 官方实验指导书
 >
 > **所以本项目的"环境搭建"风险从"高"降到"低"。** 下面直接讲怎么写代码。
@@ -32,43 +32,25 @@
 | **MQTT 上云** | `network_05_wifi_mqtt/`、`smartFarm/mqtt_send_task.c` | 已对接华为云 IoTDA 格式 |
 | **NFC 配网** | `network_06_wifi_nfc_sta/`、`base_09_i2c_nfc/` | — |
 | **多任务（CMSIS-RTOS2）** | `kernel_01_task/` ~ `kernel_08_message_queue/` | 任务/定时器/事件/互斥锁/信号量/消息队列 |
-| **★ 与 STM32 串口通信** | `Ext_Agriculture_Test/task/uart_recv_task.c`、`smartCar_uart_udp/task/uart_recv_task.c` | **官方就是按"Hi3861 + STM32 协作"设计的** |
+| **★ UART 任务骨架** | `Ext_Agriculture_Test/task/uart_recv_task.c`、`smartCar_uart_udp/task/uart_recv_task.c` | 官方 demo 的 UART 任务创建方式可借；**它的"帧结束"判据有缺陷，不要照抄**（本项目不接第二路串口，用不到） |
 | **★ 智慧农业完整项目** | `smartFarm/` | 温湿度采集 + 阈值自动控制风扇 + MQTT 收发 + OLED 显示 |
 | **★ 农业传感器扩展板** | `Ext_Agriculture_Test/` | 多任务架构模板（oled/key/uart 任务分离） |
 
 > **结论：本项目的固件工作是"改造现有 demo"而不是"从零开发"。** 工作量从 3 周压缩到 3~5 天，这是这个工作区给你们的巨大红利。
 
-### 0.1 关键发现：官方已经为"Hi3861 + STM32 协作"做好了接口
+### 0.1 板载传感器的驱动就在 BSP 里（这才是我们真正要用的）
 
-`Ext_Agriculture_Test/agriculture_demo.c` 第 67~82 行：
+**一块 FS-Hi3861 = 一个传感器节点**，三项读数全部来自板载芯片，驱动在 SDK 的板级支持包里已经写好：
 
-```c
-/**
- * @brief  串口初始化
- * @note   与STM32单片机之间的串口通信
- */
-void uart_init(void)
-{
-    hi_io_set_func(HI_IO_NAME_GPIO_5, HI_IO_FUNC_GPIO_5_UART1_RXD);
-    hi_io_set_func(HI_IO_NAME_GPIO_6, HI_IO_FUNC_GPIO_6_UART1_TXD);
-    hi_uart_attribute uart_param1 = {
-        .baud_rate = 57600, .data_bits = 8, .stop_bits = 1, .parity = 0,
-    };
-    hi_uart_init(HI_UART_IDX_1, &uart_param1, NULL);
-}
-```
+| 需要的读数 | BSP 头文件（`hi3861_application/src/vendor/hqyj/fs_hi3861/common/bsp/include/`） | 读法 |
+|---|---|---|
+| 温度 `t` + 湿度 `h` | `hal_bsp_sht20.h` | `SHT20_ReadData(&temperature, &humidity)`，浮点读数，写日志前 ×10 转整型 |
+| 光照 `l`（ALS） | `hal_bsp_ap3216c.h` | `AP3216C_ReadData(&ir, &als, &ps)`，取 `als` 作为光照值 |
 
-**这三行直接把方案 B（板间串口）的硬件问题解决了**：
+**这就是"数据真实性"的全部来源**：一个节点、两个芯片、三项读数（同一次采样）。固件不需要额外模块、不需要外接 ADC、也不需要第二路串口——`sensor_hub.c` 的职责就是把这两个驱动读到的数放进 `ZoneState`。
 
-| 事实 | 值 |
-|---|---|
-| 与 STM32 通信的串口 | `HI_UART_IDX_1`（UART1） |
-| **Hi3861 侧引脚** | **GPIO_5 = UART1_RXD，GPIO_6 = UART1_TXD** |
-| 演示代码用的波特率 | **57600**（本课题统一改为 **115200**，理由见下） |
-| 发送 API | `hi_uart_write(HI_UART_IDX_1, buf, len)` |
-| 接收 API | `hi_uart_read(HI_UART_IDX_1, buf, len)`（阻塞式） |
-
-> ⚠️ **注意**：demo 里 `uart_send_buff()` 写的是 `HI_UART_IDX_2`，而 `uart_init()` 初始化的是 `HI_UART_IDX_1`——**这是官方 demo 里的一个不一致**（`uart_send_buff` 发到了未初始化的 UART2）。**我们统一用 `HI_UART_IDX_1`**，并在报告里把这个坑写出来（"我们发现了官方示例中的 UART 索引不一致问题"——这种细节会让评委印象深刻）。
+> **为什么把这一点单列一节**：这三项读数会被下游反复引用（原始值、6 个 zone 的派生值、告警阈值都挂在这三个数上）。先确认来源只有一处，后面所有"数据是不是真的"的问题才有唯一答案。
+> **一个坑先说在前面**：`BUILD.gn` 的 `sources` 必须把两个驱动源文件都列上（`hal_bsp_sht20.c`、`hal_bsp_ap3216c.c`）。只抄 SHT20 那份配置就编译，链接期会报 `undefined reference to AP3216C_Init`——这个坑我们踩过，完整定位过程见 `docs/09-troubleshooting-log.md`。
 
 ---
 
@@ -202,9 +184,8 @@ hi3861_application/src/applications/sample/wifi-iot/app/agri_logger/
 ├── agri_logger.c        # 入口 + 任务创建
 ├── log_def.h            # ★ 日志宏（唯一出口，见 docs/02 §2.3）
 ├── zone.c / zone.h      # 6 个逻辑设备状态
-├── sensor_hub.c / .h    # 板载传感器 + MCU 串口数据汇聚
-├── fault_inject.c / .h  # 故障注入器
-└── mcu_link.c / .h      # STM32 帧解析
+├── sensor_hub.c / .h    # 板载 SHT20 / AP3216C 采集（温度/湿度/光照三项读数）
+└── fault_inject.c / .h  # 故障注入器
 ```
 
 **`app/BUILD.gn` 改为**：
@@ -228,7 +209,6 @@ static_library("agri_logger") {
         "zone.c",
         "sensor_hub.c",
         "fault_inject.c",
-        "mcu_link.c",
     ]
     include_dirs = [
         "//vendor/hqyj/fs_hi3861/common/bsp/include",   # hal_bsp_sht20.h 等
@@ -256,7 +236,6 @@ static_library("agri_logger") {
 #include "zone.h"
 #include "sensor_hub.h"
 #include "fault_inject.h"
-#include "mcu_link.h"
 
 #define ZONE_COUNT        6
 #define TASK_STACK_SIZE   (1024 * 4)     /* 轻量设备栈很宝贵，4KB 起步 */
@@ -324,7 +303,7 @@ static void agri_logger_entry(void)
     attr.stack_size = TASK_STACK_SIZE;
 
     zone_init();          /* 初始化 6 个逻辑设备 */
-    sensor_hub_init();    /* 板载传感器 + UART1（对接 STM32） */
+    sensor_hub_init();    /* 板载 SHT20 + AP3216C 初始化（三项真实读数） */
 
     char name[24];
     for (int i = 0; i < ZONE_COUNT; i++) {
@@ -365,241 +344,11 @@ osThreadGetAttr(tid, &attr);
 
 ---
 
-## 3. STM32 侧固件
-
-### 3.1 工具链（工作区已就绪）
-
-- `Tool/MDK5/` —— Keil MDK
-- `Tool/ST-Link/` —— 下载器驱动
-- `Tool/en.stm32cubemx_v5-6-0.zip` —— CubeMX（可选，HAL 库工程生成）
-- `Tool/CH340/` —— USB 转串口驱动
-
-**待确认**：STM32 的型号与温度传感器型号（见 `docs/03` §5 确认表）。下面的代码结构与具体型号无关。
-
-### 3.2 日志宏
-
-```c
-/* mcu_log.h —— 与 docs/02 §2.5 一致：[STM32] <ms> <LEVEL> <TAG>: <msg> */
-#ifndef MCU_LOG_H
-#define MCU_LOG_H
-
-#include <stdio.h>
-
-#define MCU_LOG(level_ch, tag, fmt, ...)                              \
-    printf("[STM32] %06u %c %s: " fmt "\r\n",                         \
-           (unsigned)(millis() % 1000000u), (level_ch), (tag), ##__VA_ARGS__)
-
-#define LOG_I(tag, fmt, ...) MCU_LOG('I', tag, fmt, ##__VA_ARGS__)
-#define LOG_W(tag, fmt, ...) MCU_LOG('W', tag, fmt, ##__VA_ARGS__)
-#define LOG_E(tag, fmt, ...) MCU_LOG('E', tag, fmt, ##__VA_ARGS__)
-
-#endif
-```
-
-**输出样例（与规范一致，值全为数字）**：
-
-```
-[STM32] 000512 E ONEWIRE: s=103 fault=F1002 c=1 r=3
-[STM32] 000513 I SENSOR: s=103 t=248 h=612 a=830
-```
-
-### 3.3 采集主循环 + 温度/光照
-
-```c
-/* main.c */
-int main(void)
-{
-    uart1_init(115200);       /* 日志输出 → PC（若无板载串口芯片则经 USB-TTL） */
-    uart2_init(115200);       /* 与 Hi3861 通信（方案 B，可选） */
-    adc_init();               /* PA0 ← LM393 光敏模块 AO */
-    temp_sensor_init();       /* DS18B20 / DHT11 / NTC，按实际型号 */
-    led_init(); key_init();
-
-    LOG_I("SYS", "s=0 fault=F5001 c=6 boot=1");
-
-    u32 last_sample = 0, last_beat = 0, seq = 0;
-    while (1) {
-        u32 now = millis();
-        if (now - last_sample >= 5000u) {          /* 与 Hi3861 同步：5 秒 */
-            last_sample = now;
-            sample_and_log(&seq);
-        }
-        if (now - last_beat >= 10000u) {
-            last_beat = now;
-            LOG_I("SYS", "s=%u up=%u", ++seq, now / 1000u);
-        }
-        if (key_pressed()) {                        /* 现场手动触发故障 */
-            LOG_E("ONEWIRE", "s=%u fault=F1002 c=1 r=3", ++seq);
-        }
-    }
-}
-
-void sample_and_log(u32 *seq)
-{
-    u16 adc = read_light_raw();                     /* 8 次滑动平均 */
-    int t_x10 = temp_read_x10();                    /* 温度 ×10，整型！ */
-    int h_x10 = 612;                                /* 无湿度传感器时用板载值或固定值 */
-
-    LOG_I("SENSOR", "s=%u t=%d h=%d a=%u", ++(*seq), t_x10, h_x10, adc);
-    uart2_send_frame("A", *seq, t_x10, h_x10, adc, 0);   /* 方案 B：发给 Hi3861 */
-
-    /* 真实异常：遮住光敏电阻 → WARN */
-    if (adc < LIGHT_DARK_THR) {
-        LOG_W("LIGHT", "s=%u fault=F1004 c=3 f=3 tx10=%d", *seq, (int)(adc * 10 / 41));
-    }
-}
-```
-
-> **`t_x10` 用整型而不是浮点**：① 与日志规范一致（`t=248` 表示 24.8℃）；② STM32 上避免浮点格式化（`printf("%.1f")` 在部分工程配置下需要额外的库支持，容易踩坑）。**读传感器时内部用浮点没关系，输出日志前乘 10 转整型即可。**
-
-### 3.4 三种温度传感器的驱动要点
-
-| 型号 | 关键点 | 经典坑 |
-|---|---|---|
-| **DS18B20** | 复位 → `0xCC` 跳过 ROM → `0x44` 启动转换 → 延时 750ms → `0xBE` 读 9 字节 → CRC 校验 | ① 缺 **4.7kΩ 上拉** → 恒读 `85.0`（上电默认值）；② 读时序被中断打断 → 必须 `__disable_irq()` 保护；③ 转换延时不足 → 读到上一次的值 |
-| **DHT11** | 主机拉低 ≥18ms → 释放 → 等 80µs 低 + 80µs 高 → 读 40 bit | ① 采样间隔 < 1s 返回旧值；② 上电需 1s 稳定；③ **读失败率高是正常现象**——正好作为 `F1001` 的真实触发源 |
-| **NTC** | ADC 采样 → 分压算阻值 → Steinhart-Hart 或查表 | 需标定；建议查表法（快且可预测） |
-
-**首版验收**：室温读数偏差 ≤ 2℃；**用手捂住 30 秒读数上升 ≥ 1℃**（这是"传感器真在工作"的最强证据，答辩现场就做这个动作）。
-
-### 3.5 光敏模块（LM393）接线与标定
-
-```
-模块 VCC → STM32 3.3V      ⚠️ 绝不能接 5V！AO 满量程等于 VCC，5V 会打坏 ADC 引脚
-模块 GND → STM32 GND
-模块 AO  → STM32 PA0 (ADC1_IN0)
-模块 DO  → 可不接（或接 PB0 做数字量越限演示）
-```
-
-**标定步骤**（5 分钟，结果填进 `docs/03` §5）：
-1. 用万用表量 AO 对 GND 电压：暗环境 ≈ 0.3~1.0V，手机手电筒照射 ≈ 2.0~3.2V；
-2. 记录 ADC 原始值（12 位，0~4095）：`LIGHT_DARK_THR` 取"正常室内光照值"的 1/3 左右；
-3. 旋转蓝色电位器，观察模块上 DO 指示灯翻转，记录对应位置。
-
-> **本课题最好的现场演示素材**：评委看着你用手遮住光敏电阻，3 秒后告警出现在屏幕上。**不需要任何软件注入，完全真实的物理故障。**
-
----
-
-## 4. 与 Hi3861 的串口协议（方案 B）
-
-### 4.1 帧格式
-
-```
-$AGRI,<zone>,<seq>,<t_x10>,<h_x10>,<adc>,<flags>*<CS>\r\n
-
-示例：$AGRI,A,103,248,612,830,0*3F\r\n
-      │     │   │    │    │    │   └─ flags：bit0=传感器故障 bit1=灌溉中
-      │     │   │    │    │    └───── 光照 ADC 原始值
-      │     │   │    │    └────────── 湿度 ×10（612 = 61.2%）
-      │     │   │    └─────────────── 温度 ×10（248 = 24.8℃）
-      │     │   └──────────────────── 序号
-      │     └──────────────────────── zone（A~F）
-      └────────────────────────────── 固定帧头
-CS = 从 '$' 后到 '*' 前所有字节的异或值（2 位大写十六进制）
-```
-
-**为什么用逗号分隔 + 异或校验，而不是 JSON**：
-- STM32 上无浮点格式化负担、帧长固定（约 30 字节）、解析开销极小；
-- **校验失败可以产生 `F2005 帧校验错` 日志**——这本身就是一个可注入、可观测的真实异常。
-
-### 4.2 Hi3861 侧的解析与转发
-
-**先说清楚：官方 demo 的收包写法有缺陷，不要照抄。**
-
-`smartCar_uart_udp/task/uart_recv_task.c` 的收包逻辑（第 83~103 行）用 `len < last_len` 判断"一帧收完"：
-
-```c
-hi_u32 len = hi_uart_read(HI_UART_IDX_2, uart_buff, sizeof(uart_buff));
-if (len > 0) {
-    memcpy_s(pbuff, len, uart_buff, len); pbuff += len;
-    if (len < last_len) {              /* ← 靠"本次读到的字节比上次少"猜测帧结束 */
-        pbuff = recvBuff; parse_json_data(recvBuff); ...
-    }
-    last_len = len;
-}
-```
-
-**这个启发式方法的问题**：帧长固定时永远不满足 `len < last_len`，会一直收不到；帧长波动时可能提前/滞后判定。**正确做法是按分隔符 `\n` 切分**：
-
-```c
-/* mcu_link.c —— 按 \n 切分，稳定可靠 */
-#define MCU_BUF_SIZE 256
-static char  s_buf[MCU_BUF_SIZE];
-static int   s_len = 0;
-static unsigned s_mcu_seq_expect = 0;
-
-void mcu_link_task(void)
-{
-    uint8_t chunk[64];
-    while (1) {
-        /* 阻塞读；超时时间由 uart 属性决定 */
-        hi_u32 n = hi_uart_read(HI_UART_IDX_1, chunk, sizeof(chunk));
-        for (hi_u32 i = 0; i < n; i++) {
-            char c = (char)chunk[i];
-            if (c == '\n') {
-                s_buf[s_len] = '\0';
-                if (s_len > 0) { on_mcu_frame(s_buf); }
-                s_len = 0;                       /* 复位，准备下一帧 */
-            } else if (c != '\r') {
-                if (s_len < MCU_BUF_SIZE - 1) {
-                    s_buf[s_len++] = c;
-                } else {
-                    /* 超长：丢弃并记日志（这就是 F2005 的真实来源之一） */
-                    LOG_E(DOM_SENSOR, TAG_SENSOR, "z=? s=0 fault=F2005 c=2 len=%d", s_len);
-                    s_len = 0;
-                }
-            }
-        }
-    }
-}
-
-static void on_mcu_frame(const char *line)
-{
-    /* 1) 校验帧头与校验和 */
-    uint8_t zone; unsigned seq; int t_x10, h_x10; unsigned adc, flags;
-    if (!parse_agri_frame(line, &zone, &seq, &t_x10, &h_x10, &adc, &flags)) {
-        LOG_E(DOM_SENSOR, TAG_SENSOR, "z=? s=0 fault=F2005 c=2");   /* 帧校验错 */
-        return;
-    }
-
-    /* 2) 序号连续性检查（MCU 侧丢帧检测） */
-    if (s_mcu_seq_expect && seq != s_mcu_seq_expect) {
-        LOG_W(DOM_SENSOR, TAG_SENSOR, "z=%c s=%u gap=%u",
-              zone, seq, seq - s_mcu_seq_expect);
-    }
-    s_mcu_seq_expect = seq + 1;
-
-    /* 3) 更新该 zone 的状态 */
-    ZoneState *z = zone_by_id(zone);
-    if (z) { z->temp_x10 = t_x10; z->humi_x10 = h_x10; z->lux = adc; }
-
-    /* 4) ★ 用我们的日志宏转发 —— 这一步是整个方案的技术亮点 */
-    LOG_I(DOM_SENSOR, TAG_SENSOR,
-          "z=%c s=%u t=%d h=%d l=%u src=1 mseq=%u", zone, seq, t_x10, h_x10, adc, seq);
-}
-```
-
-> **这一行的意义**（答辩必讲）：它把"STM32 采集的真实物理数据"和"OpenHarmony 规范的 hilog 格式日志"**合二为一**。可以说："我们实现了从传感器到 OpenHarmony 日志系统的完整数据通路，而不是两块板子各跑各的。"
-
-### 4.3 串口参数统一
-
-| 参数 | 官方 demo | 本课题 | 理由 |
-|---|---|---|---|
-| 波特率 | 57600 | **115200** | 与日志输出口一致，减少配置项；115200 对 5 秒一帧的数据量绰绰有余 |
-| 数据位/停止位/校验 | 8/1/无 | 8/1/无 | 沿用 |
-| Hi3861 引脚 | GPIO_5(RXD) / GPIO_6(TXD) | 同 | 沿用官方定义 |
-| 帧结束 | 靠 `len < last_len` 猜 | **`\n` 分隔** | 见 §4.2 的分析 |
-
-> ⚠️ **接线前必须确认电平**：Hi3861 是 3.3V 器件。STM32 若在 5V 供电下 TX 输出 5V，**会打坏 Hi3861 的 RX**。
-> **安全做法**：STM32 用 3.3V 供电；首版**只接单向线**（STM32_TX → Hi3861_RX）+ **共地**，不接反向线。
-
----
-
-## 5. 路线 3：日志模拟器（**B、C 同学立即开工**）
+## 3. 日志模拟器（路线 3，**B、C 同学立即开工**）
 
 模拟器逐字节复刻真机日志格式，让整个项目**不依赖硬件进度**。
 
-### 5.1 关键设计
+### 3.1 关键设计
 
 | 设计点 | 做法 | 为什么 |
 |---|---|---|
@@ -612,7 +361,7 @@ static void on_mcu_frame(const char *line)
 | 截断行 | 按概率产生半行/乱码行 | 检验解析器"永不抛异常"的纪律 |
 | 重启 | 每 N 分钟产生 `boot=+1` 且 `s=0` | 检验时间轴换算与重启检测 |
 
-### 5.2 用法
+### 3.2 用法
 
 ```bash
 # 1) 打印到屏幕观察
@@ -627,7 +376,7 @@ python tools/openharmony_log_sim.py --out logs/live.log &
 python -m agri_logger collect --source file --path logs/live.log --follow
 ```
 
-### 5.3 实现骨架（注意自检与行长检查）
+### 3.3 实现骨架（注意自检与行长检查）
 
 ```python
 #!/usr/bin/env python3
@@ -688,11 +437,11 @@ SCENARIOS = {
 }
 ```
 
-> **完整实现请按 §5.1 逐项补齐**。**由 A 同学负责实现并维护**——因为这是全项目的"数据源"，且 A 负责设备端，最清楚真机日志长什么样。基础版本 `tools/openharmony_log_sim.py` **已经写好并跑通**（含格式自检、行长检查、故障注入、信道噪声、ground-truth 标注），A 只需在此基础上增强。
+> **完整实现请按 §3.1 逐项补齐**。**由 A 同学负责实现并维护**——因为这是全项目的"数据源"，且 A 负责设备端，最清楚真机日志长什么样。基础版本 `tools/openharmony_log_sim.py` **已经写好并跑通**（含格式自检、行长检查、故障注入、信道噪声、ground-truth 标注），A 只需在此基础上增强。
 
 ---
 
-## 6. 统一验收（W4 里程碑）
+## 4. 统一验收（W4 里程碑）
 
 | 检查项 | 方法 | 通过标准 |
 |---|---|---|
@@ -702,7 +451,7 @@ SCENARIOS = {
 | **故障可复现** | 固定 seed 跑模拟器两次 | 两次故障序列完全一致 |
 | **真机稳定性** | 连续运行 2 小时 | 无死机、无重启、日志不断流 |
 | **时间轴正确** | 检查 `ts_device` → `ts_host` 换算误差 | 误差 < 100ms，重启后能正确检出 |
-| **数据真实性** | 手捂传感器 / 遮光敏电阻 | 日志数值随之变化（**截图留证，写进报告**） |
+| **数据真实性** | 遮住板载 AP3216C / 对着 SHT20 哈气 | 日志数值随之变化（**截图留证，写进报告**） |
 | **栈/堆余量** | health 任务输出的 `heap=` 与栈水位 | 连续 2 小时无下降趋势（证明无内存泄漏） |
 
 > 最后一项特别值得做：**"连续运行 2 小时堆内存无下降趋势"是证明固件没有内存泄漏的硬证据**。把 heap 值导出成折线图放进技术报告，比写十句"系统稳定"都有用。

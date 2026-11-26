@@ -19,14 +19,19 @@
   回退 logs/multi.log（真机采集）
 
 API：
-  GET /api/meta            概览：数据源、解析统计、时间范围
+  GET /api/meta            概览：数据源、解析统计、时间范围、告警通道状态
   GET /api/summary         各级别/故障码/模块/设备分布
   GET /api/timeline        时间线：按秒聚合的级别计数（供折线图）
-  GET /api/zones           6 个大棚的环境曲线
+  GET /api/zones           环境曲线（单传感器口径：一个节点一条曲线）
   GET /api/windows         窗口列表与异常分数
   GET /api/logs            日志明细（支持 level/tag/zone/q/limit/offset）
   GET /api/reports         已生成报告列表
   GET /api/report?name=xx  单份报告 Markdown 原文
+  GET /api/alerts          告警状态 + 最近告警（含未推送原因）
+  GET /api/alerts/test     发一条自测告警（?channel=email|webhook|file|console）
+  GET /api/alerts/reload   重读 .env 里的告警配置
+
+完整字段说明见 docs/00-interface-handoff.md（前端对接只认那一份）。
 """
 
 from __future__ import annotations
@@ -54,6 +59,17 @@ from agri_logger.pipeline.windows import aggregate_and_score      # noqa: E402
 from agri_logger.analyzer.rca import (window_signature, cluster_families,     # noqa: E402
                                       AnomalyAnalyzer, EvidenceValidator, Report)
 from agri_logger.analyzer.llm_client import LLMClient                        # noqa: E402
+from agri_logger.notifier import (AlertConfig, AlertEvent, AlertManager,      # noqa: E402
+                                  build_alert, build_health_alert, read_env_file)
+
+# ---------------------------------------------------------------------------
+# 告警推送：异常 →（策略）→ 控制台 / 文件 / Webhook / 邮件
+#
+# 为什么单独一层而不是"出报告时顺手发一封"：一个故障持续 10 分钟就是 10 个窗口，
+# 10 封邮件会让人开始忽略告警（告警疲劳）。去重/冷却/限流/分级都在
+# agri_logger/notifier/alert.py 的 AlertPolicy 里，这里只负责"何时造事件"。
+# ---------------------------------------------------------------------------
+ALERT_ENV_FILE = ROOT / ".env"
 
 # ---------------------------------------------------------------------------
 # 自动分析：实时模式下【检测到新的异常窗口】就调 LLM 生成本窗口的报告
@@ -71,6 +87,7 @@ AUTO_FP_COOLDOWN_S = 180.0   # 同一指纹的冷却时间（秒）；设 0 = �
 WEB_DIR = ROOT / "web"
 REPORT_DIRS = [ROOT / "reports_live", ROOT / "reports_llm", ROOT / "reports"]
 LIVE_REPORT_DIR = ROOT / "reports_live"
+SIM_REPORT_DIR = ROOT / "reports_llm"
 
 # 报告来源标注：**必须一眼看出这份结论是"真机数据"还是"模拟数据集"算出来的**。
 # 数据是真的、结论却是旧的，比数据本身是假的更危险——现场演示时最容易翻车。
@@ -128,6 +145,9 @@ class DataStore:
         self._auto_fp_at: dict = {}            # 聚合指纹 -> 上次出报告时刻（冷却）
         self._auto_busy = False                # 工作线程是否在跑
         self.auto_state = {"queued": 0, "done": 0, "skipped": 0, "error": 0}
+        # ---- 告警（异常 → 推送）----
+        # 配置来自 .env / 环境变量；配错了也只是某条告警发不出去，不影响主链路
+        self.alerts = AlertManager(AlertConfig.from_env(ALERT_ENV_FILE))
         self._load()
 
     # ---------------- 加载 ----------------
@@ -826,18 +846,93 @@ class DataStore:
             window=w, analysis=a, evidence=ev, rca=rca, usage=usage,
             mode=("llm" if a.mode == "llm" else "rule"), family_count=1,
             generated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-            data_source="真机实时串口 %s（检测到异常自动生成）"
-                        % self.live.get("source", "?"),
+            data_source=("模拟器实时数据" if self.live.get("sim") else
+                         "真机实时串口 %s" % self.live.get("source", "?"))
+                        + "（检测到异常自动生成）",
             llm_model=getattr(llm, "model", "") if a.mode == "llm" else "")
         name = a.display_name or window_signature(w)
         name = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", name)[:48]
         fn = "%s_%s.md" % (w.window_id, name)
-        LIVE_REPORT_DIR.mkdir(parents=True, exist_ok=True)
-        (LIVE_REPORT_DIR / fn).write_text(
-            rep.to_markdown(validator), encoding="utf-8")
+        report_dir = SIM_REPORT_DIR if self.live.get("sim") else LIVE_REPORT_DIR
+        report_dir.mkdir(parents=True, exist_ok=True)
+        md = rep.to_markdown(validator)
+        (report_dir / fn).write_text(md, encoding="utf-8")
         print("[auto] 已生成 %s（引擎 %s，分数 %.3f，证据 %d 条）"
               % (fn, a.mode, w.anomaly_score, len(ev)))
+
+        # ★ 出完报告立刻推告警：这是"检测到异常模式 → 推送通知"的落地点。
+        #   推送失败绝不能让分析线程挂掉，所以整段包在 try 里。
+        self._dispatch_alert(w, a, rca, report_file=fn, evidence=ev,
+                             source=("模拟器实时数据" if self.live.get("sim") else
+                                     "真机实时串口 %s" % self.live.get("source", "?")),
+                             report_md=md)
         return fn
+
+    # ---------------- 告警推送 ----------------
+    def _dispatch_alert(self, w, a, rca, report_file: str = "",
+                        evidence=None, source: str = "",
+                        report_md: str = "") -> dict:
+        """造一条告警并交给策略层推送。任何异常都只记录，不上抛。"""
+        try:
+            ev = build_alert(
+                w, a, rca=rca, report_file=report_file, source=source,
+                device_name=self.view("")["meta"].get("zone_name", ""),
+                evidence=evidence or w.evidence(max_lines=6))
+            res = self.alerts.send(ev, report_md)
+            if res.get("ok") and not res.get("skipped"):
+                print("[alert] %s → %s" % (ev.alert_id, ev.one_line()[:90]))
+            elif res.get("skipped") and not res.get("quiet"):
+                print("[alert] %s 未推送：%s" % (ev.alert_id, res.get("reason")))
+            return res
+        except Exception as e:                                   # noqa: BLE001
+            print("[alert] 推送异常（不影响分析）：%s: %s" % (type(e).__name__, e))
+            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+
+    def alert_status(self) -> dict:
+        st = self.alerts.status()
+        st["auto_state"] = dict(self.auto_state)
+        return st
+
+    def alert_history(self, limit: int = 50) -> list:
+        return self.alerts.recent(limit)
+
+    def send_test_alert(self, channel: str = "", force: bool = False) -> dict:
+        """发一条【明显是自测】的告警，验证通道能不能真的送达。
+
+        为什么要这个东西：邮箱通知最容易出问题的地方不是代码，而是配置
+        （授权码、端口、加密方式、防火墙）。如果只能"等真出故障时才知道
+        发不出去"，那这个功能在答辩现场就是不可验证的。
+        有了它，配完 .env 立刻点一下就知道通没通。
+
+        ★ 这里【刻意绕过策略层】（去重/冷却/限流）：自测是用户显式动作，
+          必须每次都真的尝试发送，否则连续点两次第二次会被冷却挡掉，
+          用户会误以为"刚才通了、现在又坏了"。
+        """
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        ch_desc = channel or "全部通道"
+        ev = AlertEvent(
+            alert_id="A-TEST-%s" % time.strftime("%Y%m%d%H%M%S"),
+            created_at=now, severity="P3",
+            title="【自测】告警通道连通性测试",
+            summary=("这是一条手动触发的测试告警，用于验证 %s 能否正常送达；"
+                     "它不代表设备有任何真实故障。" % ch_desc),
+            device="自测（非真实事件）",
+            mode="rule", source="看板自测接口 /api/alerts/test",
+            extra={"test": True})
+
+        targets = self.alerts.channels
+        if channel:
+            targets = [c for c in targets if c.kind == channel]
+            if not targets:
+                return {"ok": False, "test": True,
+                        "reason": "没有该通道：%s（当前可用：%s）"
+                                  % (channel, [c.kind for c in self.alerts.channels]),
+                        "alert": ev.to_dict(), "channels": []}
+
+        res = self.alerts.send_direct(
+            ev, kinds=[c.kind for c in targets])
+        res["test"] = True
+        return res
 
     def live_logs(self, since: int) -> dict:
         """只返回 since 之后新增的记录（增量拉取，避免整表重传）。
@@ -884,6 +979,14 @@ class DataStore:
                 continue
             label, kind = REPORT_SOURCE.get(d.name, (d.name, "other"))
             for p in sorted(d.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
+                # 旧版可能把回放报告写入 reports_live，按正文核验来源。
+                # 来源不明时不标为真机，避免历史测试报告误导使用者。
+                if d.name == "reports_live":
+                    text = p.read_text(encoding="utf-8", errors="replace")
+                    match = re.search(r"^\|\s*数据来源\s*\|\s*(.*?)\s*\|", text, re.MULTILINE)
+                    source = match.group(1) if match else ""
+                    label, kind = (("真机实时", "live") if source.startswith("真机实时串口 ")
+                                   else ("来源待确认", "other"))
                 age = max(0.0, time.time() - p.stat().st_mtime)
                 out.append({
                     "name": p.name,
@@ -987,7 +1090,9 @@ class DataStore:
 
             analyzer = AnomalyAnalyzer(llm)
             validator = EvidenceValidator(records)
-            LIVE_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+            report_dir = (LIVE_REPORT_DIR if self.live.get("enabled") and not self.live.get("sim")
+                          else SIM_REPORT_DIR)
+            report_dir.mkdir(parents=True, exist_ok=True)
 
             # 先做确定性聚类，报告里写明"本族出现 N 次"
             families = cluster_families(anomalies)
@@ -1013,7 +1118,9 @@ class DataStore:
                              usage=usage, mode=("llm" if a.mode == "llm" else "rule"),
                              family_count=fam_count.get(fam_key, 1),
                              generated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-                             data_source=("真机实时串口 %s（%s）"
+                             data_source=("模拟器实时数据（%s）" % scope
+                                          if self.live.get("sim") else
+                                          "真机实时串口 %s（%s）"
                                           % (self.live.get("source", "?"), scope)
                                           if self.live.get("enabled")
                                           else self.meta.get("log_path", "")),
@@ -1026,10 +1133,24 @@ class DataStore:
                 if fn in used:
                     fn = "%s_%s.md" % (base, fam_key)
                 used.add(fn)
-                (LIVE_REPORT_DIR / fn).write_text(
-                    rep.to_markdown(validator), encoding="utf-8")
+                md = rep.to_markdown(validator)
+                (report_dir / fn).write_text(md, encoding="utf-8")
                 st["reports"].append(fn)
                 log("已生成 %s" % fn)
+                # 手动触发的分析同样走告警（同一窗口会被 alert_id 去重，
+                # 不会因为"自动报过一次、又手动点一次"而重复发信）
+                if w.anomaly_score >= self.threshold:
+                    res = self._dispatch_alert(
+                        w, a, rca, report_file=fn, evidence=ev,
+                        source=("模拟器实时数据（%s）" % scope
+                                if self.live.get("sim") else
+                                "真机实时串口 %s（%s）"
+                                % (self.live.get("source", "?"), scope)
+                                if self.live.get("enabled")
+                                else self.meta.get("log_path", "")),
+                        report_md=md)
+                    if res.get("skipped") and not res.get("quiet"):
+                        log("告警未推送：%s" % res.get("reason"))
 
             log("证据校验：%s" % validator.report().replace("\n", " "))
             if llm.usage_today.calls or llm.usage_today.cached:
@@ -1060,7 +1181,9 @@ class DataStore:
         """
         from agri_logger.parser import fields as F
 
-        LIVE_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        report_dir = (LIVE_REPORT_DIR if self.live.get("enabled") and not self.live.get("sim")
+                      else SIM_REPORT_DIR)
+        report_dir.mkdir(parents=True, exist_ok=True)
         now = time.strftime("%Y-%m-%d %H:%M:%S")
         meta = zv["meta"]
         lv = Counter(r.level for r in records)
@@ -1068,7 +1191,9 @@ class DataStore:
         zones = Counter(r.zone for r in records if r.zone and r.zone != "-")
 
         # 数据来源说明：真机串口 还是 文件
-        if self.live.get("enabled"):
+        if self.live.get("sim"):
+            src = "模拟器实时数据（%s）" % meta["zone_name"]
+        elif self.live.get("enabled"):
             src = "真机实时串口 %s（%s）" % (self.live.get("source", "?"), meta["zone_name"])
         else:
             src = self.meta.get("log_path", "")
@@ -1153,7 +1278,17 @@ class DataStore:
  ｜ 判定方法：60 秒窗口聚合 + 5 信号加权打分（级别 0.30 / 故障码 0.25 / 静默 0.25 / seq缺口 0.10 / 阈值 0.10）</sub>
 """
         fn = "健康报告_%s.md" % time.strftime("%m%d_%H%M%S")
-        (LIVE_REPORT_DIR / fn).write_text(md, encoding="utf-8")
+        (report_dir / fn).write_text(md, encoding="utf-8")
+
+        # 健康结论也是一条告警（P3）。默认门槛是 P2，所以它只会写进审计文件
+        # alerts.jsonl，不会发邮件打扰人 —— 但事后能证明"那天系统确实健康"。
+        try:
+            ts = [r.ts_device for r in records if r.ts_device is not None]
+            dur = (max(ts) - min(ts)) if ts else 0.0
+            self.alerts.send(build_health_alert(
+                len(windows), len(records), dur, source=src, report_file=fn))
+        except Exception as e:                                   # noqa: BLE001
+            log("健康告警记录失败（不影响报告）：%s: %s" % (type(e).__name__, e))
         return fn
 
     def analyze_status(self) -> dict:
@@ -1234,7 +1369,7 @@ class Handler(BaseHTTPRequestHandler):
                     # 实时模式下 log_path 已无意义（读的是串口，不是文件）。
                     # 留着旧路径会让人以为"结论还是从那个文件算的"。
                     m["log_path"] = "（实时串口 %s，非文件）" % m["live"].get("source", "?")
-                    m["data_source"] = "真机实时"
+                    m["data_source"] = "模拟器实时" if m["live"].get("sim") else "真机实时"
                 else:
                     m["data_source"] = "静态文件回放"
                 # 若前端选了某个设备，把该设备视角的统计一并带上
@@ -1246,6 +1381,8 @@ class Handler(BaseHTTPRequestHandler):
                 m["anomaly_windows"] = zv["meta"]["anomaly_windows"]
                 m["duration_s"] = zv["meta"]["duration_s"]
                 m["device_mode"] = STORE.device_mode()
+                # 告警通道状态：前端据此显示"告警已就绪 / 邮件未配置"的徽标
+                m["alerts"] = STORE.alert_status()
                 return self._json(m)
             if path == "/api/live/status":
                 return self._json(STORE.live_status())
@@ -1294,6 +1431,23 @@ class Handler(BaseHTTPRequestHandler):
                 if md is None:
                     return self._json({"error": "报告不存在"}, 404)
                 return self._json({"name": one("name"), "markdown": md})
+            # ---- 告警 ----
+            if path == "/api/alerts":
+                # 状态 + 最近几条告警（含"为什么没推出去"的 reason，便于自查）
+                return self._json({
+                    "status": STORE.alert_status(),
+                    "items": STORE.alert_history(
+                        min(int(one("limit", "50") or 50), 200)),
+                })
+            if path == "/api/alerts/test":
+                # 一键自测：用一条合成告警走真实通道，验证 SMTP/Webhook 是否通。
+                # 只发合成内容，绝不动真实数据与真实报告。
+                return self._json(STORE.send_test_alert(
+                    channel=one("channel"), force=(one("force") == "1")))
+            if path == "/api/alerts/reload":
+                # 改完 .env 不用重启看板（答辩前现场调 SMTP 尤其需要）
+                STORE.alerts.reload(ALERT_ENV_FILE)
+                return self._json({"ok": True, "status": STORE.alert_status()})
 
             # 静态资源
             rel = path.lstrip("/")
@@ -1368,6 +1522,15 @@ def main(argv=None) -> int:
         except (AttributeError, ValueError):
             pass
 
+    # ★ 把 .env 补进环境变量（只补【缺失】的键，不覆盖已有的）。
+    #   为什么必须在这里做：原本只有 run.ps1 会加载 .env，而看板更常被
+    #   「启动器双击 / 直接 python 跑」拉起来 —— 那两条路径不经过 run.ps1，
+    #   于是 DEEPSEEK_API_KEY 永远是空的，LLM 静默降级到规则引擎，
+    #   界面上只看到"LLM 不可用"，很难想到是"没人帮忙 set 环境变量"。
+    #   踩过：直接在终端跑 dashboard_server.py 时报告一直是规则引擎出的。
+    for _k, _v in read_env_file(ALERT_ENV_FILE).items():
+        os.environ.setdefault(_k, _v)
+
     ap = argparse.ArgumentParser(description="日志分析看板（零依赖后端）")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1")
@@ -1397,6 +1560,17 @@ def main(argv=None) -> int:
     m = STORE.meta
     print(f"  ✅ {m['records']} 条 ｜ 解析率 {m['parse_rate']}% ｜ "
           f"窗口 {m['windows']} 个（异常 {m['anomaly_windows']}）｜ 耗时 {m['load_ms']}ms")
+    # 告警配置状态放在启动横幅里：现场最容易出问题的就是"以为配好了其实没生效"，
+    # 开机第一屏就把它说清楚，比事后翻文档快得多。
+    print(f"  🔔 {STORE.alerts.cfg.describe()}")
+    # LLM 是否可用也必须在第一屏说清楚：它决定报告里那句"分析引擎"到底是
+    # LLM 语义分析还是规则降级，现场被问到"这是 AI 分析的吗"时不能含糊。
+    try:
+        _llm = LLMClient()
+        print("  🤖 LLM " + ("可用（%s）" % _llm.model if _llm.available
+                             else "不可用 → 报告将标注「规则引擎降级」"))
+    except Exception as _e:                                     # noqa: BLE001
+        print(f"  🤖 LLM 状态未知：{type(_e).__name__}: {_e}")
 
     if args.live or args.live_sim:
         if args.live_sim:

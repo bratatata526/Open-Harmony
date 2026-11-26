@@ -22,8 +22,8 @@
   --line-hard: rgba(120,200,170,.28);
 
   --ink:       #cfe8dd;
-  --ink-dim:   #6f8a82;
-  --ink-faint: #44544f;
+  --ink-dim:   #91aaa1;
+  --ink-faint: #829b91;
 
   --phosphor:  #3ce68b;
   --amber:     #ffb02e;
@@ -33,13 +33,16 @@
 
   --mono: "JetBrains Mono","Cascadia Mono","SF Mono",Consolas,"Liberation Mono",monospace;
   --disp: "Bahnschrift","DIN Alternate","Franklin Gothic Medium","Arial Narrow",sans-serif;
+  --left-col: 310px;
+  --right-col: 350px;
+  --splitter: 12px;
 }
 
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
   background:var(--bg); color:var(--ink);
-  font-family:var(--mono); font-size:13px; line-height:1.5;
+  font-family:var(--mono); font-size:14px; line-height:1.5;
   overflow:hidden;
   -webkit-font-smoothing:antialiased;
 }
@@ -54,20 +57,20 @@ body::before{
 body::after{
   content:""; position:fixed; inset:0; pointer-events:none; z-index:9999;
   background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);
-  mix-blend-mode:multiply; opacity:.5;
+  mix-blend-mode:multiply; opacity:.22;
 }
 
 /* ── 布局 ───────────────────────────────────────────────────────────── */
 .shell{
   position:relative; z-index:1;
   height:100vh; display:grid;
-  grid-template-rows:auto auto 1fr;
+  grid-template-rows:auto minmax(0,1fr);
   gap:10px; padding:12px;
 }
 
 /* ── 顶栏 ───────────────────────────────────────────────────────────── */
 .topbar{
-  display:flex; align-items:center; gap:18px;
+  display:flex; flex-wrap:wrap; align-items:center; gap:12px; min-width:0;
   border:1px solid var(--line-hard); background:var(--panel);
   padding:10px 16px; position:relative;
 }
@@ -81,11 +84,11 @@ body::after{
   letter-spacing:.14em; text-transform:uppercase; color:var(--phosphor);
   text-shadow:0 0 18px rgba(60,230,139,.35); line-height:1;
 }
-.brand .sub{font-size:10px; letter-spacing:.22em; color:var(--ink-faint); text-transform:uppercase}
+.brand .sub{font-size:11px; letter-spacing:.18em; color:var(--ink-faint); text-transform:uppercase}
 
 .live{
   display:flex; align-items:center; gap:7px; margin-left:6px;
-  font-size:10px; letter-spacing:.18em; color:var(--phosphor);
+  font-size:11px; letter-spacing:.14em; color:var(--phosphor);
   border:1px solid rgba(60,230,139,.3); padding:3px 9px;
 }
 /* 回放模式：琥珀色 + 明确标注，避免误认为连着真机 */
@@ -118,15 +121,27 @@ body::after{
 .devmode.inject #devModeTxt::before{content:"⚡ "}
 .devmode.real   #devModeTxt::before{content:"✔ "}
 
+/* 新版后端告警通道状态：只显示就绪情况，不改变原有告警接口 */
+.alert-status{
+  display:flex; align-items:center; gap:6px; margin-left:6px;
+  font-size:10px; letter-spacing:.1em; padding:3px 9px;
+  border:1px solid var(--line); color:var(--ink-faint); white-space:nowrap;
+}
+.alert-status.ready{color:var(--phosphor);border-color:rgba(60,230,139,.4);background:rgba(60,230,139,.07)}
+.alert-status.warn{color:var(--amber);border-color:rgba(255,176,46,.45);background:rgba(255,176,46,.08)}
+.alert-status.off{color:var(--ink-faint)}
+.alert-status{cursor:pointer}
+.alert-status:hover{box-shadow:0 0 10px rgba(60,230,139,.18)}
+
 /* 设备选择器：切换后整块看板换视角 */
 .devsel{
   display:flex; align-items:center; gap:6px; margin-left:10px;
   border:1px solid var(--line); padding:2px 8px; background:var(--panel-2);
 }
-.devsel .lb{font-size:10px; letter-spacing:.18em; color:var(--ink-faint)}
+.devsel .lb{font-size:11px; letter-spacing:.14em; color:var(--ink-faint)}
 .devsel select{
   background:transparent; border:none; color:var(--phosphor);
-  font-family:var(--mono); font-size:11px; font-weight:600;
+  font-family:var(--mono); font-size:12px; font-weight:600;
   outline:none; cursor:pointer; padding:2px 0;
 }
 .devsel select option{background:var(--panel); color:var(--ink)}
@@ -142,10 +157,9 @@ body::after{
 .btn.an:hover{background:rgba(70,200,216,.12)}
 .btn.an.busy{color:var(--amber); border-color:rgba(255,176,46,.45); cursor:progress}
 .btn.an:disabled{opacity:.75}
-/* 报告来源过滤：默认「只看真机」，避免模拟数据集的报告被误当成真机结论 */
-.btn.src{color:var(--phosphor); border-color:rgba(60,230,139,.4);
-  background:rgba(60,230,139,.07); margin-left:auto}
-.btn.src.all{color:var(--amber); border-color:rgba(255,176,46,.4); background:rgba(255,176,46,.07)}
+.ai-toggle{display:inline-flex;align-items:center;gap:5px;margin-left:8px;color:var(--ink-dim);font-size:10px;white-space:nowrap;cursor:pointer}
+.ai-toggle input{accent-color:var(--violet)}
+.ai-toggle strong{color:var(--violet);font-weight:600}
 /* 重新连接：离线时才醒目，提示"这里能救" */
 .btn.rc{color:var(--ink-faint); border-color:var(--line)}
 .btn.rc:hover{color:var(--phosphor); border-color:rgba(60,230,139,.4); background:rgba(60,230,139,.08)}
@@ -157,80 +171,131 @@ body::after{
   border:1px dashed rgba(60,230,139,.35); background:rgba(60,230,139,.05);
 }
 
-.kpis{display:flex; gap:0; margin-left:auto; align-items:stretch}
+.kpis{display:flex;flex-wrap:wrap;gap:0;margin-left:auto;align-items:stretch;min-width:0}
 .kpi{
   padding:2px 16px; border-left:1px solid var(--line);
   display:flex; flex-direction:column; gap:1px; min-width:96px;
 }
 .kpi:first-child{border-left:none}
-.kpi .k{font-size:9px; letter-spacing:.14em; color:var(--ink-faint); text-transform:uppercase}
-.kpi .v{font-size:19px; font-weight:600; line-height:1.15; color:var(--ink)}
+.kpi .k{font-size:10px; letter-spacing:.1em; color:var(--ink-faint); text-transform:uppercase}
+.kpi .v{font-size:20px; font-weight:600; line-height:1.15; color:var(--ink)}
 .kpi .v.g{color:var(--phosphor)} .kpi .v.a{color:var(--amber)} .kpi .v.c{color:var(--crimson)}
-.kpi .u{font-size:10px; color:var(--ink-faint); margin-left:2px}
+.kpi .u{font-size:11px; color:var(--ink-faint); margin-left:2px}
 
-/* ── 主网格 ─────────────────────────────────────────────────────────── */
-/* ★ 可拖动布局：列宽/行高全部走 CSS 变量，拖拽条改这些变量即可。
-     变量挂在 .grid 上，面板尺寸跟着 grid 走，不用手动算面板大小。 */
+/* 顶部按两行组织，状态和统计各自保持对齐。 */
+.topbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 16px;padding:12px 16px}
+.topbar-main{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-width:0}
+.topbar-main .brand{margin-right:12px}
+.topbar-main .live,.topbar-main .devmode,.topbar-main .alert-status,.topbar-main .devsel{margin-left:0;min-height:34px}
+.topbar-main .live{min-width:0;max-width:100%}
+.topbar-main #srcName{overflow-wrap:anywhere}
+.topbar-main .devsel{min-width:200px}
+.topbar-main .devsel select{min-width:0;max-width:100%}
+.kpis{grid-column:1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));width:100%;margin:0;border-top:1px solid var(--line);padding-top:9px}
+.kpi{min-width:0;padding:2px 14px}
+.topbar-actions{grid-column:2;display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:9px}
+.topbar-actions .layout-reset{margin-left:0}
+@media (max-width:900px){
+  .topbar{grid-template-columns:minmax(0,1fr);padding:12px}
+  .topbar-main{grid-column:1}
+  .topbar-main .brand{flex-basis:100%}
+  .kpis{grid-column:1;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .kpi{padding:6px 8px}
+  .topbar-actions{grid-column:1;border-top:0;padding-top:0;justify-content:flex-end}
+}
+
+/* ── 主工作区：三列可拖拽，每一列内部独立分配高度 ─────────────────── */
 .grid{
-  display:grid; gap:10px; min-height:0; position:relative;
-  --gc1:268px;    /* 左列（故障码 / 异常族） */
-  --gc3:400px;    /* 右列（环境曲线 / 报告）—— 给宽一点，曲线才看得清 */
-  --gr1:170px;    /* 第一行高 */
-  --gr2:150px;    /* 第二行高 */
-  grid-template-columns: var(--gc1) 1fr var(--gc3);
-  grid-template-rows: var(--gr1) var(--gr2) 1fr;
-  grid-template-areas:
-    "faults  timeline  zones"
-    "fams    timeline  zones"
-    "fams    stream    reports";
+  display:grid; gap:0; min-height:0; height:100%;
+  grid-template-columns:var(--left-col) var(--splitter) minmax(460px,1fr) var(--splitter) var(--right-col);
 }
-
-/* 拖拽条：绝对定位覆盖在网格间隙上。
-   ★ 高亮做成【1 条 2px 细线】而不是整块色带 ——
-     原来悬停时整条 11px 宽的区域全部变绿，看着像一条横穿屏幕的横幅，
-     很容易被误认为渲染错误。现在只有中间一条细线亮起，指向明确又不抢眼。 */
-.splitter{position:absolute; z-index:30; background:transparent}
+.column{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;min-width:0;min-height:0}
+.left-column{grid-column:1; grid-template-rows:minmax(230px,.92fr) minmax(260px,1.08fr)}
+.center-column{grid-column:3; grid-template-rows:minmax(250px,.8fr) minmax(320px,1.2fr)}
+.right-column{grid-column:5; grid-template-rows:minmax(280px,1fr) minmax(240px,.82fr)}
+.splitter{
+  position:relative; min-height:0; cursor:col-resize; touch-action:none;
+  display:flex; justify-content:center; z-index:4;
+}
+.splitter::before{
+  content:""; width:1px; height:100%; background:var(--line); transition:all .16s ease;
+}
 .splitter::after{
-  content:''; position:absolute; background:transparent;
-  transition:background .12s, box-shadow .12s;
+  content:""; position:absolute; top:50%; width:3px; height:42px; transform:translateY(-50%);
+  background:var(--ink-faint); box-shadow:0 -7px 0 var(--ink-faint),0 7px 0 var(--ink-faint); opacity:.65;
 }
-.splitter.v::after{left:50%; top:0; width:2px; height:100%; margin-left:-1px}
-.splitter.h::after{top:50%; left:0; height:2px; width:100%; margin-top:-1px}
-.splitter:hover::after,.splitter.drag::after{
-  background:var(--phosphor); box-shadow:0 0 6px rgba(60,230,139,.75);
+.splitter:hover::before,.splitter.dragging::before{width:2px;background:var(--phosphor);box-shadow:0 0 12px rgba(60,230,139,.55)}
+.splitter:hover::after,.splitter.dragging::after{background:var(--phosphor);box-shadow:0 -7px 0 var(--phosphor),0 7px 0 var(--phosphor)}
+.splitter.left{grid-column:2}.splitter.right{grid-column:4}
+.layout-reset{margin-left:10px; white-space:nowrap}
+.layout-reset:hover{color:var(--cyan); border-color:var(--cyan)}
+body.resizing{cursor:col-resize; user-select:none}
+
+/* 时间线在获得更高空间时真正扩展画布，不再留下黑色空区。 */
+.timeline .chart-wrap{padding:8px 10px 2px; flex:1 1 auto; min-height:150px; display:flex}
+.timeline .chart-wrap canvas{height:100%; min-height:140px}
+.timeline .legend{flex:0 0 auto}
+.timeline{cursor:pointer; transition:box-shadow .14s ease, background .14s ease}
+.timeline:hover{box-shadow:inset 0 0 0 1px rgba(60,230,139,.35); background:rgba(60,230,139,.025)}
+.timeline:focus-visible{outline:2px solid var(--phosphor); outline-offset:-2px}
+.fams{min-height:0}
+.faults{min-height:0}
+.zones{min-height:0}
+.reports{min-height:0}
+
+/* 告警详情抽屉：点击顶栏告警状态后在当前页面打开 */
+.alert-modal{position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.72)}
+.alert-modal.open{display:flex}
+.alert-sheet{width:min(860px,94vw);max-height:min(760px,88vh);display:flex;flex-direction:column;border:1px solid var(--line-hard);background:rgba(9,14,15,.98);box-shadow:0 18px 70px rgba(0,0,0,.6)}
+.alert-sheet>header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:rgba(22,30,33,.8)}
+.alert-sheet h3{font-family:var(--disp);color:var(--phosphor);letter-spacing:.08em}
+.alert-sheet .alert-meta{font-size:11px;color:var(--ink-faint);margin-left:auto}
+.alert-sheet .body{overflow:auto;padding:14px}
+.alert-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.alert-actions .btn{color:var(--cyan);border-color:rgba(70,200,216,.4)}
+.alert-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.alert-kpi{border:1px solid var(--line);padding:8px 10px;background:rgba(16,22,24,.7)}
+.alert-kpi .k{display:block;color:var(--ink-faint);font-size:10px}.alert-kpi .v{display:block;color:var(--phosphor);font-size:18px;margin-top:3px}
+.alert-item{border:1px solid var(--line);border-left:3px solid var(--amber);padding:10px 12px;margin:8px 0;background:rgba(22,30,33,.55)}
+.alert-item.p1,.alert-item.p0{border-left-color:var(--crimson)}
+.alert-item .head{display:flex;gap:9px;align-items:center}.alert-item .sev{color:var(--amber);font-weight:700}.alert-item.p1 .sev,.alert-item.p0 .sev{color:var(--crimson)}
+.alert-item .title{color:var(--ink);font-weight:700}.alert-item .time{margin-left:auto;color:var(--ink-faint);font-size:10px}.alert-item .summary{color:var(--ink-dim);margin-top:6px;line-height:1.55}.alert-item .detail{color:var(--ink-faint);font-size:10px;margin-top:6px}
+@media (max-width:620px){.alert-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.alert-sheet .alert-meta{display:none}}
+
+/* 列变窄时收紧内容结构，而不是把字体压到难以阅读。 */
+.left-column,.right-column{container-type:inline-size}
+@container (max-width: 285px){
+  .fault{gap:6px;padding:7px 8px}.fault .nm{font-size:10px}
+  .fam{padding:6px}.fam .meta{font-size:8px}
+  .zcard{padding:7px}.zcard .zn{display:none}
 }
-/* 拖动中给个抓手光标，并且提示"正在改布局" */
-.splitter.drag{cursor:inherit}
-
-/* 拖拽热区尺寸（透明，只负责接鼠标事件） */
-.splitter.v{width:11px; margin-left:-5px; cursor:col-resize}
-.splitter.h{height:11px; margin-top:-5px; cursor:row-resize}
-
-/* 布局被改过时，标题栏右侧给一个显眼的"已自定义"提示 + 重置入口 */
-.layouthint{
-  display:none; align-items:center; gap:6px; margin-left:10px;
-  font-size:10px; letter-spacing:.1em; color:var(--amber);
-  border:1px solid rgba(255,176,46,.4); background:rgba(255,176,46,.07);
-  padding:2px 8px; cursor:pointer;
+@container (min-width: 390px){
+  .fault .nm{font-size:12px}.fam .nm{font-size:12px}
+  .zcard .zrow{font-size:12px}.zcard canvas{height:34px}
 }
-.layouthint.on{display:flex}
-.layouthint:hover{background:rgba(255,176,46,.16)}
-/* 拖动时禁止选中文字，否则会拖出一片蓝色选区；canvas 也要禁掉 pointer-events */
-body.resizing{user-select:none}
-body.resizing canvas{pointer-events:none}
-
 @media (max-width:1280px){
-  .grid{grid-template-columns:var(--gc1) 1fr; grid-template-rows:auto auto 1fr;
-    grid-template-areas:
-      "faults timeline" "fams stream" "reports reports";}
-  .grid .zones{display:none}
+  body{overflow:auto}
+  .shell{height:auto;min-height:100vh}
+  .grid{grid-template-columns:minmax(260px,.85fr) minmax(480px,1.45fr);gap:10px;height:auto}
   .splitter{display:none}
+  .left-column{grid-column:1;grid-row:1;min-height:660px}
+  .center-column{grid-column:2;grid-row:1;min-height:660px}
+  .right-column{grid-column:1/-1;grid-row:2;grid-template-columns:1fr 1fr;grid-template-rows:minmax(280px,1fr)}
 }
 @media (max-width:900px){
-  body{overflow:auto}
-  .shell{height:auto}
-  .grid{grid-template-columns:1fr; grid-template-rows:auto;
-    grid-template-areas:"timeline" "stream" "faults" "fams" "reports";}
+  .grid{grid-template-columns:minmax(0,1fr);gap:10px}
+  .topbar{padding:12px;gap:10px}.brand{flex:1 1 180px}.brand .sub{letter-spacing:.04em}
+  .kpis{width:100%;margin-left:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .kpi{min-width:0;padding:6px 8px}.devsel{max-width:100%}.devsel select{min-width:0;max-width:65vw}
+  .modechip{white-space:normal;margin-left:0}.toolbar input,.toolbar select{max-width:100%}
+  .reader .md{padding:16px}.env-range-head,.tl-range-head{flex-wrap:wrap}
+  .env-legend,.timeline-legend{flex-wrap:wrap;gap:8px}
+  .env-sheet,.timeline-sheet{min-height:0;max-height:94dvh;overflow:auto}
+  .env-body,.timeline-body{min-height:460px}.env-chart-labels{font-size:10px}
+  .left-column,.center-column,.right-column{grid-column:1;grid-row:auto;min-height:auto}
+  .left-column{grid-template-rows:minmax(250px,auto) minmax(260px,auto)}
+  .center-column{grid-template-rows:minmax(260px,auto) minmax(360px,auto)}
+  .right-column{grid-template-columns:1fr;grid-template-rows:minmax(280px,auto) minmax(240px,auto)}
 }
 
 /* 异常族卡片：把"反复出现的同一类异常"压成一条，一眼看出频次 */
@@ -239,11 +304,11 @@ body.resizing canvas{pointer-events:none}
   padding:6px 8px; border-left:2px solid var(--violet);
   background:rgba(157,123,255,.05); margin-bottom:5px;
 }
-.fam .nm{font-size:11px; color:var(--ink); font-weight:600;
+.fam .nm{font-size:12px; color:var(--ink); font-weight:600;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.fam .ct{font-size:13px; color:var(--violet); font-weight:700;
+.fam .ct{font-size:14px; color:var(--violet); font-weight:700;
   font-family:var(--mono); line-height:1}
-.fam .meta{grid-column:1/3; font-size:9px; color:var(--ink-faint);
+.fam .meta{grid-column:1/3; font-size:10px; color:var(--ink-faint);
   font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .fam .key{color:var(--violet); opacity:.75}
 
@@ -258,19 +323,16 @@ body.resizing canvas{pointer-events:none}
   background:var(--panel-2); flex:0 0 auto;
 }
 .panel > header h2{
-  font-family:var(--disp); font-size:11px; font-weight:600;
+  font-family:var(--disp); font-size:12px; font-weight:600;
   letter-spacing:.2em; text-transform:uppercase; color:var(--ink-dim);
 }
 .panel > header .cnt{
-  margin-left:auto; font-size:10px; color:var(--ink-faint); letter-spacing:.08em;
+  margin-left:auto; font-size:11px; color:var(--ink-faint); letter-spacing:.06em;
 }
 .panel .body{overflow:auto; min-height:0; flex:1 1 auto}
 .panel .body::-webkit-scrollbar{width:9px;height:9px}
 .panel .body::-webkit-scrollbar-thumb{background:rgba(120,200,170,.2)}
 .panel .body::-webkit-scrollbar-track{background:transparent}
-
-.faults{grid-area:faults} .timeline{grid-area:timeline}
-.stream{grid-area:stream} .zones{grid-area:zones} .reports{grid-area:reports}
 
 /* ── 故障码列表 ─────────────────────────────────────────────────────── */
 .fault{
@@ -280,14 +342,14 @@ body.resizing canvas{pointer-events:none}
 }
 .fault:hover{background:rgba(60,230,139,.05)}
 .fault .code{
-  font-size:10px; font-weight:600; letter-spacing:.04em; padding:1px 5px;
+  font-size:11px; font-weight:600; letter-spacing:.04em; padding:1px 5px;
   border:1px solid currentColor; color:var(--crimson); white-space:nowrap;
 }
 .fault.normal .code{color:var(--ink-faint)}
-.fault .nm{font-size:11px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.fault .nm{font-size:12px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .fault.normal .nm{color:var(--ink-faint)}
 .fault .ct{
-  font-size:12px; font-weight:600; color:var(--phosphor); min-width:26px; text-align:right;
+  font-size:13px; font-weight:600; color:var(--phosphor); min-width:26px; text-align:right;
 }
 /* 次数条 */
 .fault .bar{
@@ -298,79 +360,68 @@ body.resizing canvas{pointer-events:none}
 
 /* ── 图表 ───────────────────────────────────────────────────────────── */
 canvas{display:block; width:100%}
-/* 时间线：chart-wrap 参与 flex 伸缩撑满面板剩余高度，
-   canvas 100% 填满它。原来 canvas 写死 height="150" 属性，
-   面板拉高之后上面一小条图、下面一大片空白。 */
-.chart-wrap{position:relative; padding:8px 10px; flex:1 1 auto; min-height:0}
-.chart-wrap canvas{width:100%; height:100%; display:block}
-.legend{display:flex; gap:14px; padding:0 11px 8px; font-size:10px; color:var(--ink-faint)}
+.chart-wrap{position:relative; padding:8px 10px}
+.legend{display:flex; gap:14px; padding:0 11px 8px; font-size:11px; color:var(--ink-faint)}
 .legend i{display:inline-block;width:8px;height:2px;vertical-align:middle;margin-right:5px}
 
 /* 大棚卡片 */
-/* .zgrid 撑满 body（body 是 flex:1，有确定高度，所以 100% 有效）；
-   auto-rows:1fr 让多行等高，卡片再高也不会挤在一起。 */
+.zones .body{position:relative;min-height:220px;overflow:hidden}
 .zgrid{
-  display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line);
-  height:100%; grid-auto-rows:1fr;
+  position:absolute;inset:0;display:block;overflow-x:hidden;overflow-y:auto;
+  scroll-snap-type:y proximity;scrollbar-gutter:stable;overscroll-behavior:contain;
+  background:var(--panel);min-width:0;width:100%;
 }
-/* .zones 面板只有一个设备时（单设备模式）铺满整行，别挤在半边 */
-.zgrid.one{grid-template-columns:1fr}
-
-/* 指标选择器：切换看哪条曲线 */
-.metricsel{display:flex; gap:0; margin-left:auto}
-.mb{
-  background:transparent; border:1px solid var(--line); border-right:none;
-  color:var(--ink-faint); font-family:var(--mono); font-size:10px;
-  padding:2px 8px; cursor:pointer; letter-spacing:.06em;
+.zgrid::-webkit-scrollbar{width:9px}
+.zgrid::-webkit-scrollbar-thumb{background:rgba(120,200,170,.3)}
+.zcard{
+  height:100%;min-height:0;min-width:0;padding:14px 16px;
+  display:grid;grid-template-rows:auto minmax(0,1fr) repeat(3,auto);gap:12px;
+  background:var(--panel);scroll-snap-align:start;
+  cursor:pointer;transition:background .14s ease,box-shadow .14s ease;
 }
-.mb:last-child{border-right:1px solid var(--line)}
-.mb:hover{color:var(--ink)}
-.mb.on{color:var(--phosphor); background:rgba(60,230,139,.1); border-color:rgba(60,230,139,.45)}
-.btn.big{color:var(--cyan); border-color:rgba(70,200,216,.4); margin-left:6px}
-.btn.big:hover{background:rgba(70,200,216,.12)}
-
-/* 曲线放大浮层：整屏看趋势 */
-.bigchart{
-  position:fixed; inset:0; z-index:9997; background:rgba(6,10,9,.96);
-  display:none; flex-direction:column; padding:14px 18px; backdrop-filter:blur(3px);
-}
-.bigchart.open{display:flex}
-.bigchart header{display:flex; align-items:center; gap:10px; margin-bottom:10px}
-.bigchart h3{font-family:var(--disp); font-size:18px; letter-spacing:.2em; color:var(--phosphor)}
-.bigchart .wrap{flex:1; min-height:0; position:relative}
-.bigchart canvas{width:100%; height:100%; display:block}
-.bigchart .lg{display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; font-size:11px; color:var(--ink-dim)}
-.bigchart .lg i{display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:middle}
-.zcard{background:var(--panel); padding:8px 10px; display:flex; flex-direction:column; gap:5px}
+.zchart-shell{min-width:0;min-height:0;overflow:hidden}
+.zchart-shell canvas{width:100%;height:100%;max-width:100%}
+.zcard .zn{display:block;white-space:normal;font-size:12px}
+.zcard .zrow{font-size:14px}
+.zcard .zrow span:first-child{font-size:13px}
+.zblank{height:100%;scroll-snap-align:start;background:var(--panel)}
+.zgrid>.empty{height:100%;display:grid;place-items:center;background:var(--panel)}
+.zcard:hover{background:rgba(60,230,139,.08); box-shadow:inset 0 0 0 1px rgba(60,230,139,.42)}
+.zcard:focus-visible{outline:2px solid var(--phosphor); outline-offset:-2px}
 .zcard .zh{display:flex; align-items:baseline; gap:6px}
 .zcard .zz{
-  font-family:var(--disp); font-size:15px; font-weight:700; color:var(--phosphor);
+  font-family:var(--disp); font-size:16px; font-weight:700; color:var(--phosphor);
   letter-spacing:.06em;
 }
-.zcard .zn{font-size:9px; color:var(--ink-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.zcard .zrow{display:flex; justify-content:space-between; font-size:11px}
-.zcard .zrow span:first-child{color:var(--ink-faint); font-size:10px}
-/* ★ 曲线的尺寸交给 CSS，JS 只负责按实际尺寸设置画布分辨率。
-   关键是 canvas 要【参与 flex 伸缩】（flex:1），面板变高它就跟着变高；
-   写死 height:56px 的话面板再大曲线也只有一小条，下面全是空白。
-   min-height 保证面板被拖得很矮时曲线还有可见高度，不至于压成一条线。 */
-.zcard{min-height:0}
-.zcard canvas{width:100%; flex:1 1 auto; min-height:44px; display:block}
+.zcard .zn{font-size:12px;color:var(--ink-dim);overflow-wrap:anywhere;min-width:0}
+.zcard .zrow{display:flex;justify-content:space-between;gap:12px;font-size:14px}
+.zcard .zrow span:first-child{color:var(--ink-dim);font-size:13px}
+
 
 /* ── 日志流（主角）──────────────────────────────────────────────────── */
 .stream .body{padding:0}
 .logline{
   display:grid; grid-template-columns:132px 26px 54px 96px 1fr;
-  gap:9px; padding:2px 12px; font-size:11.5px; line-height:1.6;
+  gap:9px; padding:3px 12px; font-size:12.5px; line-height:1.6;
   border-left:2px solid transparent; white-space:nowrap;
   animation:slidein .22s ease-out;
 }
 @keyframes slidein{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
 .logline:hover{background:rgba(60,230,139,.06)}
+/* 状态行使用独立列，长标签不再挤进日志级别的固定窄列。 */
+.logline.status-line{
+  grid-template-columns:132px max-content minmax(0,1fr);min-width:0;
+  white-space:normal;align-items:start;color:var(--crimson);border-left-color:var(--crimson);
+}
+.status-line .lv{white-space:nowrap;text-align:left}
+.status-line .status-message{min-width:0;overflow-wrap:anywhere;line-height:1.7}
+@media(max-width:600px){
+  .logline.status-line{grid-template-columns:minmax(0,1fr);gap:4px}
+}
 .logline .t{color:var(--ink-faint)}
 .logline .lv{font-weight:700; text-align:center}
-.logline .dm{color:var(--cyan); opacity:.75; font-size:10px}
-.logline .tg{color:var(--ink-dim); font-size:10px; overflow:hidden; text-overflow:ellipsis}
+.logline .dm{color:var(--cyan); opacity:.75; font-size:11px}
+.logline .tg{color:var(--ink-dim); font-size:11px; overflow:hidden; text-overflow:ellipsis}
 .logline .ms{color:var(--ink); overflow:hidden; text-overflow:ellipsis}
 
 .logline.lv-I{border-left-color:transparent}
@@ -399,14 +450,14 @@ canvas{display:block; width:100%}
 }
 .toolbar input,.toolbar select{
   background:rgba(7,9,10,.8); border:1px solid var(--line-hard); color:var(--ink);
-  font-family:var(--mono); font-size:11px; padding:3px 7px; outline:none;
+  font-family:var(--mono); font-size:12px; padding:4px 7px; outline:none;
 }
 .toolbar input:focus,.toolbar select:focus{border-color:var(--phosphor)}
 .toolbar input{width:150px}
 .btn{
   background:transparent; border:1px solid var(--line-hard); color:var(--ink-dim);
-  font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
-  padding:3px 10px; cursor:pointer; transition:all .13s; text-transform:uppercase;
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.04em;
+  padding:4px 10px; cursor:pointer; transition:all .13s; text-transform:uppercase;
 }
 .btn:hover{border-color:var(--phosphor); color:var(--phosphor); background:rgba(60,230,139,.07)}
 .btn.on{background:var(--phosphor); color:#04120a; border-color:var(--phosphor); font-weight:700}
@@ -418,8 +469,8 @@ canvas{display:block; width:100%}
 }
 .rep:hover{background:rgba(60,230,139,.06)}
 .rep.sel{background:rgba(60,230,139,.1); border-left:2px solid var(--phosphor)}
-.rep .rn{font-size:11px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.rep .rm{font-size:9.5px; color:var(--ink-faint); margin-top:2px; display:flex; gap:8px}
+.rep .rn{font-size:12px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.rep .rm{font-size:10.5px; color:var(--ink-faint); margin-top:2px; display:flex; gap:8px}
 
 /* 报告阅读器（浮层） */
 .reader{
@@ -457,6 +508,154 @@ canvas{display:block; width:100%}
 .reader .md strong{color:var(--ink)} .reader .md hr{border:none;border-top:1px solid var(--line);margin:18px 0}
 .reader .md ul,.reader .md ol{margin:8px 0 8px 22px}
 
+
+/* 报告生成结果与保存 */
+.report-dialog{position:fixed;inset:0;z-index:9100;display:none;align-items:center;justify-content:center;background:rgba(4,6,7,.78)}
+.report-dialog.open{display:flex}
+.report-dialog .report-box{width:min(560px,92vw);max-height:85vh;overflow:auto;background:#0c1315;border:1px solid var(--line-hard);box-shadow:0 18px 60px #000;padding:22px}
+.report-dialog header{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.report-dialog h3{color:var(--phosphor);font-size:18px;flex:1;margin:0}
+.report-dialog .report-message{font-size:15px;line-height:1.7;color:var(--ink);margin:18px 0;white-space:pre-wrap}
+.report-dialog .report-files{display:grid;gap:10px}
+.report-dialog .report-file{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid var(--line);overflow-wrap:anywhere}
+.report-dialog .report-file span{min-width:0}
+.report-dialog .report-hint{color:var(--ink-dim);font-size:13px;line-height:1.6;margin-top:14px}
+
+/* 大棚详情：叠加在原页面之上的小窗口，不离开当前标签页。 */
+.env-modal{
+  position:fixed; inset:0; z-index:9100; display:none; align-items:center; justify-content:center;
+  padding:5vh 7vw; background:rgba(2,5,6,.64); backdrop-filter:blur(2px);
+}
+.env-modal.open{display:flex}
+.env-sheet{
+  width:min(1040px,82vw); height:min(680px,80vh); min-height:460px;
+  display:flex; flex-direction:column; border:1px solid var(--line-hard); background:#091012;
+  box-shadow:0 20px 70px rgba(0,0,0,.58);
+}
+.env-sheet header{
+  display:flex; align-items:center; gap:10px; padding:10px 14px;
+  border-bottom:1px solid var(--line); background:var(--panel-2); flex:0 0 auto;
+}
+.env-sheet header h3{font-family:var(--disp); font-size:16px; letter-spacing:.12em; color:var(--phosphor)}
+.env-sheet header .env-meta{font-size:11px; color:var(--ink-faint); margin-left:auto}
+.icon-btn{
+  width:30px; height:30px; border:1px solid var(--line-hard); background:transparent; color:var(--ink-dim);
+  font:22px/1 Arial,sans-serif; cursor:pointer;
+}
+.icon-btn:hover{color:var(--crimson); border-color:var(--crimson); background:rgba(255,77,77,.08)}
+.env-body{display:flex; flex:1 1 auto; min-height:0; flex-direction:column; padding:14px 16px 16px; gap:12px}
+.env-stats{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; flex:0 0 auto}
+.env-stat{
+  border:1px solid var(--line); background:rgba(16,22,24,.56); padding:8px 11px;
+  font:inherit; color:inherit; text-align:left; width:100%; cursor:pointer;
+  border-radius:0; -webkit-appearance:none; appearance:none;
+  transition:border-color .15s, background .15s, opacity .15s, box-shadow .15s;
+}
+.env-stat:hover{border-color:var(--line-hard); background:rgba(22,30,33,.8)}
+.env-stat:focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
+.env-stat .k{display:block; color:var(--ink-faint); font-size:11px; margin-bottom:2px}
+.env-stat .v{font-size:20px; font-weight:600}.env-stat.temp .v{color:var(--amber)}
+.env-stat.humi .v{color:var(--cyan)}.env-stat.light .v{color:var(--phosphor)}
+.env-stat.temp.is-on{border-color:rgba(255,176,46,.85); background:rgba(40,32,16,.55); box-shadow:inset 0 0 0 1px rgba(255,176,46,.28), 0 0 14px rgba(255,176,46,.16)}
+.env-stat.humi.is-on{border-color:rgba(70,200,216,.85); background:rgba(14,32,36,.55); box-shadow:inset 0 0 0 1px rgba(70,200,216,.28), 0 0 14px rgba(70,200,216,.16)}
+.env-stat.light.is-on{border-color:rgba(60,230,139,.85); background:rgba(14,34,24,.55); box-shadow:inset 0 0 0 1px rgba(60,230,139,.28), 0 0 14px rgba(60,230,139,.16)}
+.env-stat.is-on .k::after{content:" · 筛选中"; color:var(--ink-dim)}
+.env-stats.is-filtering .env-stat:not(.is-on){opacity:.5}
+.env-stats.is-filtering .env-stat:not(.is-on):hover{opacity:.95}
+.env-range-control{border:1px solid var(--line);background:rgba(16,22,24,.56);padding:9px 11px;flex:0 0 auto}
+.env-range-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--ink-faint);margin-bottom:7px}
+.env-range-head strong{font-weight:500;color:var(--ink)}
+.env-range-slider{position:relative;height:22px;margin:0 2px}
+.env-range-track,.env-range-fill{position:absolute;left:0;right:0;top:10px;height:3px;border-radius:0}
+.env-range-track{background:rgba(120,200,170,.18)}
+.env-range-fill{left:0;right:auto;background:var(--cyan);box-shadow:0 0 8px rgba(70,200,216,.4)}
+.env-range-slider input[type=range]{
+  -webkit-appearance:none;appearance:none;position:absolute;z-index:2;left:0;top:0;width:100%;height:22px;
+  margin:0;background:transparent;pointer-events:none;outline:none;
+}
+.env-range-slider input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:13px;height:13px;border:2px solid #061015;background:var(--cyan);
+  box-shadow:0 0 0 1px rgba(70,200,216,.7),0 0 10px rgba(70,200,216,.4);cursor:ew-resize;pointer-events:auto;
+}
+.env-range-slider input[type=range]::-moz-range-thumb{width:11px;height:11px;border:2px solid #061015;border-radius:0;background:var(--cyan);cursor:ew-resize;pointer-events:auto}
+.env-range-slider input[type=range]::-webkit-slider-runnable-track{height:3px;background:transparent}
+.env-range-help{font-size:10px;color:var(--ink-faint);margin-top:3px}
+.env-chart-labels{display:flex; justify-content:space-between; color:var(--ink-faint); font-size:11px; flex:0 0 auto}
+.env-chart-labels .temp{color:var(--amber)}.env-chart-labels .humi{color:var(--cyan)}.env-chart-labels .light{color:var(--phosphor)}
+.env-chart-shell{position:relative; flex:1 1 auto; min-height:220px; border:1px solid var(--line); background:rgba(4,8,9,.46)}
+.env-chart-shell canvas{width:100%; height:100%; display:block}
+.env-legend{display:flex; gap:18px; color:var(--ink-dim); font-size:11px; flex:0 0 auto}
+.env-legend i{display:inline-block; width:14px; height:2px; margin-right:5px; vertical-align:middle}
+.env-legend span[data-metric]{transition:opacity .15s}
+.env-legend span[data-metric].off{display:none}
+.env-legend #envSamples{margin-left:auto}
+
+/* 日志密度详情：同页浮层，显示更宽的时间轴与每段精确计数。 */
+.timeline-modal{
+  position:fixed; inset:0; z-index:9100; display:none; align-items:center; justify-content:center;
+  padding:5vh 7vw; background:rgba(2,5,6,.64); backdrop-filter:blur(2px);
+}
+.timeline-modal.open{display:flex}
+.timeline-sheet{
+  width:min(1120px,86vw); height:min(690px,81vh); min-height:470px;
+  display:flex; flex-direction:column; border:1px solid var(--line-hard); background:#091012;
+  box-shadow:0 20px 70px rgba(0,0,0,.58);
+}
+.timeline-sheet header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel-2)}
+.timeline-sheet header h3{font-family:var(--disp);font-size:16px;letter-spacing:.12em;color:var(--phosphor)}
+.timeline-sheet header .tl-meta{font-size:11px;color:var(--ink-faint);margin-left:auto}
+.timeline-body{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;padding:14px 16px 16px;gap:12px}
+.timeline-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;flex:0 0 auto}
+.timeline-stat{border:1px solid var(--line);background:rgba(16,22,24,.56);padding:8px 11px}
+.timeline-stat .k{display:block;color:var(--ink-faint);font-size:11px;margin-bottom:2px}
+.timeline-stat .v{font-size:20px;font-weight:600}.timeline-stat.info .v{color:var(--phosphor)}
+.timeline-stat.warn .v{color:var(--amber)}.timeline-stat.error .v{color:var(--crimson)}
+.tl-range-control{border:1px solid var(--line);background:rgba(16,22,24,.56);padding:9px 11px;flex:0 0 auto}
+.tl-range-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--ink-faint);margin-bottom:7px}
+.tl-range-head strong{font-weight:500;color:var(--ink)}
+.tl-range-slider{position:relative;height:22px;margin:0 2px}
+.tl-range-track,.tl-range-fill{position:absolute;left:0;right:0;top:10px;height:3px;border-radius:0}
+.tl-range-track{background:rgba(120,200,170,.18)}
+.tl-range-fill{left:0;right:auto;background:var(--phosphor);box-shadow:0 0 8px rgba(60,230,139,.4)}
+.tl-range-slider input[type=range]{
+  -webkit-appearance:none;appearance:none;position:absolute;z-index:2;left:0;top:0;width:100%;height:22px;
+  margin:0;background:transparent;pointer-events:none;outline:none;
+}
+.tl-range-slider input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:13px;height:13px;border:2px solid #06120a;background:var(--phosphor);
+  box-shadow:0 0 0 1px rgba(60,230,139,.7),0 0 10px rgba(60,230,139,.4);cursor:ew-resize;pointer-events:auto;
+}
+.tl-range-slider input[type=range]::-moz-range-thumb{width:11px;height:11px;border:2px solid #06120a;border-radius:0;background:var(--phosphor);cursor:ew-resize;pointer-events:auto}
+.tl-range-slider input[type=range]::-webkit-slider-runnable-track{height:3px;background:transparent}
+.tl-range-help{font-size:10px;color:var(--ink-faint);margin-top:3px}
+.timeline-axis-labels{display:flex;justify-content:space-between;color:var(--ink-faint);font-size:11px;flex:0 0 auto}
+.timeline-chart-shell{position:relative;flex:1 1 auto;min-height:230px;border:1px solid var(--line);background:rgba(4,8,9,.46)}
+.timeline-chart-shell canvas{width:100%;height:100%;display:block}
+.tl-tooltip{
+  display:none;position:absolute;z-index:2;pointer-events:none;padding:6px 8px;
+  border:1px solid var(--line-hard);background:#0b1214;color:var(--ink);font-size:11px;line-height:1.55;
+  box-shadow:0 5px 18px rgba(0,0,0,.35);white-space:nowrap;
+}
+.timeline-legend{display:flex;gap:18px;color:var(--ink-dim);font-size:11px;flex:0 0 auto}
+.timeline-legend i{display:inline-block;width:14px;height:2px;margin-right:5px;vertical-align:middle}
+@media (max-width:900px){
+  .env-modal{padding:3vh 3vw}.env-sheet{width:94vw;height:86vh;min-height:420px}
+  .env-stats{gap:6px}.env-stat{padding:7px}.env-stat .v{font-size:17px}
+  .env-sheet header h3{font-size:14px}.env-sheet header .env-meta{display:none}
+  .timeline-modal{padding:3vh 3vw}.timeline-sheet{width:94vw;height:86vh;min-height:420px}
+  .timeline-stats{gap:6px}.timeline-stat{padding:7px}.timeline-stat .v{font-size:17px}
+  .timeline-sheet header h3{font-size:14px}.timeline-sheet header .tl-meta{display:none}
+}
+
+.panel{min-width:0}.chart-wrap{min-width:0;overflow:hidden}.chart-wrap canvas{min-width:0;max-width:100%}
+.panel>header{min-width:0;flex-wrap:wrap}.panel header h2{flex-shrink:0}
+.panel .body{min-width:0}.logline{min-width:660px}.zgrid{min-width:0;width:100%}
+.status-note{grid-column:1/-1;padding:8px 12px;border:1px solid var(--line-hard);color:var(--amber);font-size:12px;overflow-wrap:anywhere}
+.status-note[hidden]{display:none}.shell:has(.status-note:not([hidden])){grid-template-rows:auto auto minmax(0,1fr)}
+.env-range-head,.tl-range-head{gap:8px;flex-wrap:wrap}.range-follow{font-size:11px;white-space:nowrap}.range-follow input{accent-color:var(--phosphor)}
+@media (min-width:1281px) and (max-height:850px){
+  body{overflow:auto}.shell{height:auto;min-height:100vh}.grid{height:700px}
+}
 /* 空态 / 载入 */
 .empty{padding:28px 16px; text-align:center; color:var(--ink-faint); font-size:11px}
 .boot{
@@ -481,6 +680,7 @@ canvas{display:block; width:100%}
 
   <!-- ══ 顶栏 ══ -->
   <div class="topbar">
+    <div class="topbar-main">
     <div class="brand">
       <h1>AGRI-OPS</h1>
       <div class="sub">OpenHarmony 温室集群 · 日志智能聚合分析</div>
@@ -491,14 +691,14 @@ canvas{display:block; width:100%}
     <div class="devmode" id="devMode" title="设备端当前的运行模式（来自固件的 AgriMode 日志）。按板子上的 KEY 按键切换。">
       <span id="devModeTxt">设备模式 –</span>
     </div>
-    <!-- 布局被拖动过才出现：点它或按 Ctrl+Alt+R 一键还原 -->
-    <div class="layouthint" id="layoutHint" title="面板大小被拖动过了。点击还原默认布局（快捷键 Ctrl+Alt+R）">
-      <span>布局已自定义 ↺ 还原</span>
+    <div class="alert-status" id="alertStatus" title="新版后端告警通道状态">
+      <span id="alertStatusTxt">告警状态 –</span>
     </div>
     <!-- 设备选择器：整块看板聚焦到一个棚（真实运维的视角） -->
     <div class="devsel" title="选择要分析的设备。选中某个棚后，窗口/时间线/异常族/报告都只由这个棚的日志算出，异常判定不会被别的棚的正常日志摊薄。">
       <span class="lb">设备</span>
-      <select id="devSel"><option value="">全部（6 个棚）</option></select>
+      <select id="devSel"><option value="">全部设备</option></select>
+    </div>
     </div>
     <div class="kpis">
       <div class="kpi"><span class="k">日志行数</span><span class="v g" id="kLines">–</span></div>
@@ -508,101 +708,115 @@ canvas{display:block; width:100%}
       <div class="kpi"><span class="k">异常族</span><span class="v a" id="kFam">–</span></div>
       <div class="kpi"><span class="k">最长行</span><span class="v a" id="kLine">–<span class="u">B</span></span></div>
     </div>
+    <div class="topbar-actions">
+    <button class="btn sound-toggle on" id="soundToggle" type="button" aria-pressed="true" title="开启或关闭界面提示音">🔊 声音开</button>
+    <button class="btn layout-reset" id="layoutReset" title="恢复默认三栏宽度">复位布局</button>
+    </div>
   </div>
 
+  <div id="panelStatus" class="status-note" role="status" hidden></div>
   <!-- ══ 主网格 ══ -->
-  <div class="grid" id="grid" style="grid-row:2/4">
-    <!-- 拖拽条（位置由 JS 按实际面板边界计算） -->
-    <div class="splitter v" data-k="gc1"></div>
-    <div class="splitter v" data-k="gc3"></div>
-    <div class="splitter h" data-k="gr1"></div>
-    <div class="splitter h" data-k="gr2"></div>
+  <div class="grid" id="workspaceGrid">
 
-    <!-- 故障码 -->
-    <section class="panel faults">
-      <header><h2>故障码分布</h2><span class="cnt" id="faultCnt"></span></header>
-      <div class="body" id="faultList"><div class="empty">加载中…</div></div>
-    </section>
+    <!-- 左列：故障与异常聚合 -->
+    <div class="column left-column">
 
-    <!-- 异常族聚合（智能聚合的可见结果）-->
-    <section class="panel fams">
-      <header>
-        <h2>异常族聚合</h2>
-        <span class="cnt" id="famCnt"></span>
-      </header>
-      <div class="body" id="famList"><div class="empty">加载中…</div></div>
-    </section>
+      <!-- 故障码 -->
+      <section class="panel faults">
+        <header><h2>故障码分布</h2><span class="cnt" id="faultCnt"></span></header>
+        <div class="body" id="faultList"><div class="empty">加载中…</div></div>
+      </section>
 
-    <!-- 时间线 -->
-    <section class="panel timeline">
-      <header><h2>日志密度时间线</h2><span class="cnt" id="tlHint">按秒聚合</span></header>
-      <div class="chart-wrap"><canvas id="tlCanvas"></canvas></div>
-      <div class="legend">
-        <span><i style="background:var(--phosphor)"></i>INFO</span>
-        <span><i style="background:var(--amber)"></i>WARN</span>
-        <span><i style="background:var(--crimson)"></i>ERROR</span>
-        <span style="margin-left:auto;color:var(--ink-faint)" id="tlRange"></span>
-      </div>
-    </section>
+      <!-- 异常族聚合（智能聚合的可见结果）-->
+      <section class="panel fams">
+        <header>
+          <h2>异常族聚合</h2>
+          <span class="cnt" id="famCnt"></span>
+        </header>
+        <div class="body" id="famList"><div class="empty">加载中…</div></div>
+      </section>
+    </div>
 
-    <!-- 大棚环境 -->
-    <section class="panel zones">
-      <header>
-        <h2>环境曲线</h2>
-        <div class="metricsel" id="metricSel" title="选择要显示的曲线。'全部'会把温度/湿度/光照归一化后画在同一张图上，用于看变化趋势是否同步。">
-          <button class="mb on" data-m="all">全部</button>
-          <button class="mb" data-m="temp">温度</button>
-          <button class="mb" data-m="humi">湿度</button>
-          <button class="mb" data-m="light">光照</button>
+    <div class="splitter left" data-split="left" role="separator" aria-label="调整左侧面板宽度" aria-orientation="vertical" tabindex="0"></div>
+
+    <!-- 中列：把可用高度给时间线和日志流，不再出现大块闲置区域 -->
+    <div class="column center-column">
+
+      <!-- 时间线 -->
+      <section class="panel timeline" id="timelinePanel" role="button" tabindex="0" title="点击查看详细日志密度时间线">
+        <header><h2>日志密度时间线</h2><span class="cnt" id="tlHint">按秒聚合</span></header>
+        <div class="chart-wrap"><canvas id="tlCanvas" height="150"></canvas></div>
+        <div class="legend">
+          <span><i style="background:var(--phosphor)"></i>INFO</span>
+          <span><i style="background:var(--amber)"></i>WARN</span>
+          <span><i style="background:var(--crimson)"></i>ERROR</span>
+          <span style="margin-left:auto;color:var(--ink-faint)" id="tlRange"></span>
         </div>
-        <button class="btn big" id="btnZoneBig" title="把当前指标放大到整屏观看，所有设备叠在一起对比">放大</button>
-        <span class="cnt" id="zoneCnt"></span>
-      </header>
-      <div class="body"><div class="zgrid" id="zoneGrid"></div></div>
-    </section>
+      </section>
 
-    <!-- 日志流（主角）-->
-    <section class="panel stream">
-      <header>
-        <h2 id="streamTitle">日志流</h2>
-        <span class="modechip" id="streamMode"></span>
-        <span class="cnt" id="streamCnt"></span>
-      </header>
-      <div class="toolbar">
-        <button class="btn on" data-lv="">全部</button>
-        <button class="btn" data-lv="W">≥WARN</button>
-        <button class="btn" data-lv="E">ERROR</button>
-        <select id="fZone"><option value="">全部设备</option></select>
-        <select id="fTag"><option value="">全部模块</option></select>
-        <input id="fQ" placeholder="正则 / 关键词…">
-        <button class="btn" id="btnClr">清空</button>
-        <button class="btn rc" id="btnReconnect" style="margin-left:auto">重新连接</button>
-      </div>
-      <div class="body" id="stream"><div class="empty">加载中…</div></div>
-    </section>
+      <!-- 日志流（主角）-->
+      <section class="panel stream">
+        <header>
+          <h2 id="streamTitle">日志流</h2>
+          <span class="modechip" id="streamMode"></span>
+          <span class="cnt" id="streamCnt"></span>
+        </header>
+        <div class="toolbar">
+          <button class="btn on" data-lv="">全部</button>
+          <button class="btn" data-lv="W">≥WARN</button>
+          <button class="btn" data-lv="E">ERROR</button>
+          <select id="fZone"><option value="">全部设备</option></select>
+          <select id="fTag"><option value="">全部模块</option></select>
+          <input id="fQ" placeholder="正则 / 关键词…">
+          <button class="btn" id="btnClr" title="仅清除当前显示，继续接收新日志">清空</button>
+          <button class="btn on" id="btnFollow" aria-pressed="true">跟随最新</button>
+          <button class="btn rc" id="btnReconnect" style="margin-left:auto">重新连接</button>
+        </div>
+        <div class="body" id="stream"><div class="empty">加载中…</div></div>
+      </section>
+    </div>
 
-    <!-- 报告 -->
-    <section class="panel reports">
-      <header>
-        <h2>根因报告</h2>
-        <span class="cnt" id="repCnt"></span>
-        <button class="btn src" id="btnRepSrc" title="切换报告来源范围">只看真机</button>
-        <button class="btn an" id="btnAnalyze">生成根因报告</button>
-      </header>
-      <div class="body" id="repList"><div class="empty">加载中…</div></div>
-    </section>
+    <div class="splitter right" data-split="right" role="separator" aria-label="调整右侧面板宽度" aria-orientation="vertical" tabindex="0"></div>
+
+    <!-- 右列：设备环境与报告 -->
+    <div class="column right-column">
+
+      <!-- 大棚环境 -->
+      <section class="panel zones">
+        <header><h2>大棚环境</h2><span class="cnt" id="zoneCnt">等待设备数据</span></header>
+        <div class="body"><div class="zgrid" id="zoneGrid"></div></div>
+      </section>
+
+      <!-- 报告 -->
+      <section class="panel reports">
+        <header>
+          <h2>根因报告</h2>
+          <span class="cnt" id="repCnt"></span>
+          <label class="ai-toggle" title="开启后尝试使用 LLM 生成摘要和根因；没有 API Key 时自动降级到规则引擎"><input id="aiAnalyzeToggle" type="checkbox" checked><strong>AI分析</strong></label>
+          <button class="btn an" id="btnAnalyze">生成根因报告</button>
+        </header>
+        <div class="body" id="repList"><div class="empty">加载中…</div></div>
+      </section>
+    </div>
   </div>
 </div>
 
-<!-- 曲线放大浮层 -->
-<div class="bigchart" id="bigChart">
-  <header>
-    <h3 id="bigTitle">环境曲线</h3>
-    <span class="cnt" id="bigHint"></span>
-    <button class="btn" id="bigClose" style="margin-left:auto">关闭 ESC</button>
-  </header>
-  <div class="wrap"><canvas id="bigCanvas"></canvas></div>
-  <div class="lg" id="bigLegend"></div>
+<!-- 新版后端告警详情：读取 /api/alerts，不改变原有日志接口 -->
+<div class="alert-modal" id="alertModal" aria-hidden="true">
+  <section class="alert-sheet" role="dialog" aria-modal="true" aria-labelledby="alertTitle">
+    <header><h3 id="alertTitle">告警中心</h3><span class="alert-meta" id="alertMeta"></span><button class="icon-btn" id="alertClose" type="button" title="关闭告警中心" aria-label="关闭告警中心">&times;</button></header>
+    <div class="body" id="alertBody"><div class="empty">加载告警记录…</div></div>
+  </section>
+</div>
+
+<!-- 报告生成状态 -->
+<div class="report-dialog" id="reportDialog" aria-hidden="true">
+  <section class="report-box" role="dialog" aria-modal="true" aria-labelledby="reportDialogTitle">
+    <header><h3 id="reportDialogTitle">生成根因报告</h3><button class="icon-btn" id="reportDialogClose" type="button" aria-label="关闭">&times;</button></header>
+    <div class="report-message" id="reportDialogMessage" role="status" aria-live="polite"></div>
+    <div class="report-files" id="reportDialogFiles"></div>
+    <div class="report-hint" id="reportDialogHint"></div>
+  </section>
 </div>
 
 <!-- 报告阅读器 -->
@@ -616,26 +830,141 @@ canvas{display:block; width:100%}
   </div>
 </div>
 
+<!-- 大棚环境详情：在当前页面上方显示，不跳转新标签页 -->
+<div class="env-modal" id="envModal" aria-hidden="true">
+  <section class="env-sheet" role="dialog" aria-modal="true" aria-labelledby="envTitle">
+    <header>
+      <h3 id="envTitle">大棚环境趋势</h3>
+      <span class="env-meta" id="envMeta"></span>
+      <button class="icon-btn" id="envClose" type="button" title="关闭环境详情" aria-label="关闭环境详情">&times;</button>
+    </header>
+    <div class="env-body">
+      <div class="env-stats">
+        <button type="button" class="env-stat temp" data-metric="temp" id="envStatTemp" aria-pressed="false" title="点击只看温度曲线；再次点击恢复温湿度对比">
+          <span class="k">区间末温度</span><span class="v" id="envTemp">–</span>
+        </button>
+        <button type="button" class="env-stat humi" data-metric="humi" id="envStatHumi" aria-pressed="false" title="点击只看湿度曲线；再次点击恢复温湿度对比">
+          <span class="k">区间末湿度</span><span class="v" id="envHumi">–</span>
+        </button>
+        <button type="button" class="env-stat light" data-metric="light" id="envStatLight" aria-pressed="false" title="点击只看光照曲线；再次点击恢复温湿度对比">
+          <span class="k">区间末光照</span><span class="v" id="envLight">–</span>
+        </button>
+      </div>
+      <div class="env-range-control">
+        <div class="env-range-head"><span>显示时间范围</span><strong id="envRangeLabel">–</strong><label class="range-follow"><input id="envFollow" type="checkbox" checked> 跟随最新</label></div>
+        <div class="env-range-slider">
+          <div class="env-range-track"></div><div class="env-range-fill" id="envRangeFill"></div>
+          <input id="envRangeStart" type="range" min="0" max="0" value="0" step="1" aria-label="环境时间范围起点">
+          <input id="envRangeEnd" type="range" min="0" max="0" value="0" step="1" aria-label="环境时间范围终点">
+        </div>
+        <div class="env-range-help" id="envRangeHelp">拖动左右滑块选择时间段；点击上方卡片可只看单项曲线</div>
+      </div>
+      <div class="env-chart-labels"><span class="temp" id="envAxisLeft">左轴：温度 (°C)</span><span>横轴：采样时间</span><span class="humi" id="envAxisRight">右轴：湿度 (%)</span></div>
+      <div class="env-chart-shell"><canvas id="envChart"></canvas></div>
+      <div class="env-legend">
+        <span data-metric="temp" id="envLegendTemp"><i style="background:var(--amber)"></i>温度</span>
+        <span data-metric="humi" id="envLegendHumi"><i style="background:var(--cyan)"></i>湿度</span>
+        <span data-metric="light" id="envLegendLight"><i style="background:var(--phosphor)"></i>光照</span>
+        <span id="envSamples"></span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- 日志密度详情：在当前页面上方显示，不跳转新标签页 -->
+<div class="timeline-modal" id="timelineModal" aria-hidden="true">
+  <section class="timeline-sheet" role="dialog" aria-modal="true" aria-labelledby="timelineTitle">
+    <header>
+      <h3 id="timelineTitle">日志密度时间线</h3>
+      <span class="tl-meta" id="timelineMeta"></span>
+      <button class="icon-btn" id="timelineClose" type="button" title="关闭时间线详情" aria-label="关闭时间线详情">&times;</button>
+    </header>
+    <div class="timeline-body">
+      <div class="timeline-stats">
+        <div class="timeline-stat info"><span class="k">INFO 总数</span><span class="v" id="tlInfoTotal">–</span></div>
+        <div class="timeline-stat warn"><span class="k">WARN 总数</span><span class="v" id="tlWarnTotal">–</span></div>
+        <div class="timeline-stat error"><span class="k">ERROR 总数</span><span class="v" id="tlErrorTotal">–</span></div>
+      </div>
+      <div class="tl-range-control">
+        <div class="tl-range-head"><span>显示时间范围</span><strong id="tlRangeLabel">–</strong><label class="range-follow"><input id="tlFollow" type="checkbox" checked> 跟随最新</label></div>
+        <div class="tl-range-slider">
+          <div class="tl-range-track"></div><div class="tl-range-fill" id="tlRangeFill"></div>
+          <input id="tlRangeStart" type="range" min="0" max="0" value="0" step="1" aria-label="时间范围起点">
+          <input id="tlRangeEnd" type="range" min="0" max="0" value="0" step="1" aria-label="时间范围终点">
+        </div>
+        <div class="tl-range-help">拖动左右滑块，动态缩放当前详情图显示的时间段</div>
+      </div>
+      <div class="timeline-axis-labels"><span>纵轴：每个时间段的日志数</span><span>横轴：日志时间</span></div>
+      <div class="timeline-chart-shell">
+        <canvas id="timelineDetailCanvas"></canvas>
+        <div class="tl-tooltip" id="tlTooltip"></div>
+      </div>
+      <div class="timeline-legend"><span><i style="background:var(--phosphor)"></i>INFO</span><span><i style="background:var(--amber)"></i>WARN</span><span><i style="background:var(--crimson)"></i>ERROR</span><span id="tlDetailHint"></span></div>
+    </div>
+  </section>
+</div>
+
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    前端逻辑：纯原生 JS，无框架、无 CDN（保证答辩现场离线可用）
    ═════════════════════════════════════════════════════════════════════════ */
 const $ = (s)=>document.querySelector(s);
-const api = async (p)=>{ const r = await fetch(p); if(!r.ok) throw new Error(r.status); return r.json(); };
+const api = async (p)=>{
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
+  try{const r=await fetch(p,{signal:controller.signal});if(!r.ok)throw new Error('HTTP '+r.status);return await r.json();}
+  finally{clearTimeout(timeout);}
+};
 
 const COLOR = {I:'#3ce68b', W:'#ffb02e', E:'#ff4d4d', F:'#ff4d4d', D:'#6f8a82'};
 const state = { records:[], playing:false, timer:null, cursor:0,
                 filter:{level:'',zone:'',tag:'',q:''},
-                mode:'replay', liveCursor:0, liveTimer:null, liveEpoch:0,
+                mode:'replay', liveCursor:0, liveEpoch:null, liveTimer:null,
                 liveSource:'', isSim:false, panelTimer:null,
                 zone:'',            /* ← 当前聚焦的设备（'' = 全部） */
-                repSrc:'live',      /* ← 报告来源范围：live 只看真机 / all 含模拟 */
-                repAll:null,
-                metric:'all',      /* 环境曲线当前指标：all/temp/humi/light */
-                lastZones:null,
-                lastTimeline:null,
-                zoneSig:'',        /* 当前渲染的设备集合指纹，没变就只重绘不重建 DOM */
-                __observeZoneCards:null };
+                repAll:null, envZone:'', envData:null, envStart:0, envEnd:null,
+                envMetric:'',          /* '' = 温湿度对比；temp/humi/light = 只看单项 */
+                timeline:[], timelineHover:-1,
+                timelineStart:0, timelineEnd:null, timelineFollow:true, envFollow:true,
+                lastZones:{},zoneSig:null,followLogs:true,streamVersion:0,
+                 panelVersion:0,panelBusy:false,analyzeBusy:false,replayCleared:false,
+                 soundEnabled:true, audioCtx:null, lastAlertKey:'', useLLM:true };
+
+/* ── 页面提示音 ────────────────────────────────────────────────────────
+   使用浏览器内置 Web Audio API 生成短提示音，不新增音频文件和后端接口。
+   第一次点击大棚/时间线时属于用户手势，可以解除浏览器的自动播放限制；
+   后续收到 ERROR/FATAL 日志时播放告警音。声音开关只保存在当前页面。 */
+function audioContext(){
+  if(!state.soundEnabled) return null;
+  const C=window.AudioContext||window.webkitAudioContext;
+  if(!C) return null;
+  if(!state.audioCtx) state.audioCtx=new C();
+  if(state.audioCtx.state==='suspended') state.audioCtx.resume().catch(()=>{});
+  return state.audioCtx;
+}
+function tone(freq,duration,offset=0,volume=.045,type='sine'){
+  const ctx=audioContext(); if(!ctx) return;
+  const now=ctx.currentTime+offset, osc=ctx.createOscillator(), gain=ctx.createGain();
+  osc.type=type; osc.frequency.setValueAtTime(freq,now);
+  gain.gain.setValueAtTime(.0001,now);
+  gain.gain.exponentialRampToValueAtTime(volume,now+.012);
+  gain.gain.exponentialRampToValueAtTime(.0001,now+duration);
+  osc.connect(gain);gain.connect(ctx.destination);osc.start(now);osc.stop(now+duration+.02);
+}
+function playUiSound(kind='open'){
+  if(!state.soundEnabled) return;
+  if(kind==='alert'){
+    tone(740,.12,0,.065,'square'); tone(520,.16,.14,.055,'square');
+  }else{
+    tone(660,.08,0,.04,'sine'); tone(880,.11,.09,.035,'sine');
+  }
+}
+function setSoundEnabled(on){
+  state.soundEnabled=!!on;
+  const b=$('#soundToggle'); if(!b)return;
+  b.classList.toggle('on',state.soundEnabled); b.setAttribute('aria-pressed',String(state.soundEnabled));
+  b.textContent=state.soundEnabled?'🔊 声音开':'🔇 声音关';
+  if(state.soundEnabled) playUiSound('open');
+}
 
 /* 给所有派生接口带上当前设备范围。
    整块看板共用这一个 scope：切了设备之后，KPI/时间线/异常族/报告/日志流
@@ -648,7 +977,7 @@ function ZQ(path){
 /* HTML 转义：日志原文和错误信息都可能带 < > &，直接插进 innerHTML 会破坏结构 */
 function escHtml(s){
   return String(s == null ? '' : s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 /* 模式徽标的统一文案（在线/离线两态，避免各处拼字符串拼歪） */
@@ -656,6 +985,78 @@ function liveLabel(online){
   const who = state.isSim ? '模拟器' : (state.liveSource || '设备');
   return online ? ('实时 · ' + who) : ('离线 · ' + who + '已停');
 }
+function metaIsSimulator(meta){
+  return !!(meta && (
+    meta.sim === true ||
+    (meta.live && meta.live.sim === true) ||
+    meta.live_source === 'simulator' ||
+    meta.data_source === '模拟器' ||
+    String(meta.data_source || '').includes('模拟') ||
+    (meta.live && meta.live.source === 'simulator')
+  ));
+}
+function renderAlertStatus(alerts){
+  const box=$('#alertStatus'), txt=$('#alertStatusTxt');
+  if(!box || !txt) return;
+  if(!alerts){box.className='alert-status off';txt.textContent='告警状态 未提供';return;}
+  const channels=(alerts.channels||[]).filter(Boolean);
+  const ready=channels.length>0 && alerts.enabled!==false;
+  const problems=[];
+  if(alerts.email_problem) problems.push('邮件未配置');
+  if(alerts.last_error) problems.push('最近发送失败');
+  box.className='alert-status '+(ready && !problems.length?'ready':ready?'warn':'off');
+  txt.textContent=ready
+    ? ('告警 '+(problems.length?'部分就绪':'已就绪')+' · '+channels.join('/'))
+    : '告警 未启用';
+  box.title=alerts.describe || '新版后端告警通道状态';
+}
+function updateAIHint(){
+  const toggle=$('#aiAnalyzeToggle'), btn=$('#btnAnalyze');
+  if(!toggle||!btn)return;
+  toggle.title=toggle.checked
+    ? '开启后尝试使用 LLM；没有 API Key 或网络不可用时自动降级到规则引擎'
+    : '关闭后只使用本地规则引擎，不调用 LLM';
+}
+function alertEsc(v){return escHtml(v==null?'':v);}
+function renderAlertCenter(data){
+  const status=data?.status||{}, items=Array.isArray(data?.items)?data.items:[], body=$('#alertBody');
+  if(!body)return;
+  const channels=(status.channels||[]).join(' / ')||'无';
+  const sent=Number(status.sent||0), failed=Number(status.failed||0), skipped=Object.values(status.skipped||{}).reduce((n,v)=>n+Number(v||0),0);
+  $('#alertMeta').textContent=status.describe||('通道 '+channels);
+  body.innerHTML=`<div class="alert-actions"><button class="btn" id="alertTestFile" type="button">测试文件通道</button><button class="btn" id="alertTestEmail" type="button">测试邮箱通道</button>${status.webhook_ready ? '<button class="btn" id="alertTestHook" type="button">测试Webhook</button>' : ''}<span class="alert-meta" id="alertTestResult"></span></div><div class="alert-summary">
+    <div class="alert-kpi"><span class="k">通道</span><span class="v">${alertEsc(channels)}</span></div>
+    <div class="alert-kpi"><span class="k">已发送</span><span class="v">${sent}</span></div>
+    <div class="alert-kpi"><span class="k">失败</span><span class="v">${failed}</span></div>
+    <div class="alert-kpi"><span class="k">策略跳过</span><span class="v">${skipped}</span></div>
+  </div>` + (items.length ? items.map(a=>{
+    const sev=String(a.severity||'P3').toLowerCase();
+    // /api/alerts 里的 channels 是通道结果对象数组（{channel,ok,...}），
+    // 直接 join 会显示成 [object Object]，这里取 channel 名。
+    const channels=(a.channels||[]).map(x=>x&&x.channel?x.channel:String(x||'')).filter(Boolean).join('/')||'未发送';
+    return `<article class="alert-item ${sev}"><div class="head"><span class="sev">${alertEsc(a.severity||'P3')}</span><span class="title">${alertEsc(a.title||'未命名告警')}</span><span class="time">${alertEsc(a.created_at||'')}</span></div><div class="summary">${alertEsc(a.summary||'')}</div><div class="detail">设备：${alertEsc(a.device_name||a.device||'—')}　窗口：${alertEsc(a.window_id||'—')}　通道：${alertEsc(channels)}${a.skip_reason?'　原因：'+alertEsc(a.skip_reason):''}</div></article>`;
+  }).join('') : '<div class="empty">暂无告警记录。实时模式检测到异常并生成告警后，会显示在这里。</div>');
+  $('#alertTestFile').onclick=()=>testAlertChannel('file');
+  $('#alertTestEmail').onclick=()=>testAlertChannel('email');
+  const hookBtn=$('#alertTestHook');
+  if(hookBtn) hookBtn.onclick=()=>testAlertChannel('webhook');
+}
+async function testAlertChannel(channel){
+  const out=$('#alertTestResult'), buttons=document.querySelectorAll('#alertBody .alert-actions .btn');
+  buttons.forEach(b=>b.disabled=true); if(out)out.textContent='测试中…';
+  try{
+    const r=await api('/api/alerts/test?channel='+encodeURIComponent(channel)+'&force=1');
+    const result=(r.channels||[]).find(x=>x.channel===channel);
+    if(out)out.textContent=(result&&result.ok&&!result.skipped?'测试成功：':'测试未通过：')+(result?.detail||r.reason||'请查看后端返回');
+  }catch(e){if(out)out.textContent='测试失败：'+e.message;}
+  finally{buttons.forEach(b=>b.disabled=false);}
+}
+async function openAlertCenter(){
+  $('#alertModal').classList.add('open');$('#alertModal').setAttribute('aria-hidden','false');
+  $('#alertBody').innerHTML='<div class="empty">加载告警记录…</div>';
+  try{renderAlertCenter(await api('/api/alerts?limit=50'));}catch(e){$('#alertBody').innerHTML='<div class="empty">告警接口暂时不可用：'+alertEsc(e.message)+'</div>';}
+}
+function closeAlertCenter(){$('#alertModal').classList.remove('open');$('#alertModal').setAttribute('aria-hidden','true');}
 /* 日志流标题旁的模式提示条 */
 function setStreamChip(kind, text){
   const c = $('#streamMode');
@@ -718,24 +1119,52 @@ function md2html(md){
   return out.join('\n').replace(/<sub>/g,'<sub style="color:#44544f;font-size:10px">');
 }
 
+function panelStatus(message=''){
+  $('#panelStatus').textContent=message;$('#panelStatus').hidden=!message;
+}
+function renderDeviceOptions(summary,zones){
+  const ids=(summary.zones||[]).filter(z=>z.zone && z.zone!=='-');
+  const selected=state.zone,sel=$('#devSel');
+  const options='<option value="">全部设备（'+ids.length+' 个）</option>'+ids.map(d=>
+    `<option value="${escHtml(d.zone)}">${escHtml(d.zone)} · ${escHtml(zones[d.zone]?.name||'设备')}（${d.count}）</option>`).join('');
+  if(sel.innerHTML!==options){sel.innerHTML=options;sel.value=selected;}
+}
+function renderSnapshot(meta,summary,tl,zones,fams){
+  // 实时模式尚无记录时，不展示接口残留的回放统计。
+  const empty=state.mode==='live' && meta.records===0;
+  if(empty){summary={...summary,faults:[],zones:[],tags:[]};tl=[];zones={};fams=[];}
+  state.liveSource=meta.live?.source||state.liveSource;state.isSim=metaIsSimulator(meta);
+  renderAlertStatus(meta.alerts);
+  renderDeviceMode(meta.device_mode);
+  $('#kLines').textContent=meta.records.toLocaleString();
+  $('#kParse').innerHTML=empty?'–':meta.parse_rate+'<span class="u">%</span>';
+  $('#kDur').textContent=fmtDur(meta.duration_s);
+  $('#kAnom').textContent=empty?'0 / 0':meta.anomaly_windows+' / '+meta.windows;
+  $('#kLine').innerHTML=empty?'–':meta.longest_line+'<span class="u">B</span>';
+  renderFaults(summary);renderFamilies(fams);renderTimeline(tl);renderZones(zones);fillFilters(summary);
+  if(!state.zone)renderDeviceOptions(summary,zones);
+  panelStatus(empty?'尚未收到实时日志，异常统计暂不展示。请检查开发板连接。':'');
+}
+async function refreshPanels(){
+  const version=++state.panelVersion;
+  try{
+    const [meta,summary,tl,zones,fams]=await Promise.all([
+      api(ZQ('/api/meta')),api(ZQ('/api/summary')),api(ZQ('/api/timeline')),api(ZQ('/api/zones')),api(ZQ('/api/families'))]);
+    if(version!==state.panelVersion)return;
+    renderSnapshot(meta,summary,tl,zones,fams);
+  }catch(e){if(version===state.panelVersion)panelStatus('面板更新失败，当前内容可能已过期；连接恢复后会自动更新。');}
+}
+
 /* ── 启动流程 ───────────────────────────────────────────────────────── */
 (async function boot(){
   try{
     const meta = await api(ZQ('/api/meta'));
     state.mode = meta.mode || 'replay';
 
-    /* 设备清单 —— 让用户能聚焦到单个棚 */
-    try{
-      const devs = await api('/api/devices');
-      const sel = $('#devSel');
-      sel.innerHTML = '<option value="">全部（6 个棚）</option>' +
-        devs.map(d=>`<option value="${d.zone}">${d.zone} · ${d.name}（${d.count}）</option>`).join('');
-    }catch(e){ /* 无设备清单也不影响主流程 */ }
-
     /* ── 模式标识：回放/实时一眼可辨，避免误认为连着真机 ── */
     const badge = $('#modeBadge');
     state.liveSource = (meta.live && meta.live.source) || '';
-    state.isSim = state.liveSource === 'simulator';
+    state.isSim = metaIsSimulator(meta);
     if(state.mode === 'live'){
       badge.classList.remove('replay');
       $('#srcName').textContent = liveLabel(true);
@@ -751,29 +1180,9 @@ function md2html(md){
         '回放中 · 循环播放 ' + meta.log_path.split('/').pop() + ' —— 与开发板是否通电/连接【无关】');
     }
 
-    renderDeviceMode(meta.device_mode);
-      $('#kLines').textContent = meta.records.toLocaleString();
-    $('#kParse').innerHTML = meta.parse_rate + '<span class="u">%</span>';
-    $('#kDur').textContent = fmtDur(meta.duration_s);
-    $('#kAnom').textContent = meta.anomaly_windows + ' / ' + meta.windows;
-    $('#kLine').innerHTML = meta.longest_line + '<span class="u">B</span>';
-    $('#kLine').className = 'v ' + (meta.longest_line > 128 ? 'c' : 'a');
-    $('#tlHint').textContent = (await api('/api/timeline'))[0]?.step > 1
-      ? `每 ${(await api('/api/timeline'))[0].step} 秒聚合` : '按秒聚合';
-
-    const [summary, tl, zones, reports, fams] = await Promise.all([
-      api(ZQ('/api/summary')), api(ZQ('/api/timeline')), api(ZQ('/api/zones')),
-      api('/api/reports'), api(ZQ('/api/families'))
-    ]);
-
-    renderFaults(summary);
-    renderFamilies(fams);
-    renderTimeline(tl);
-    renderZones(zones);
-    renderReports(reports);
-
-    // 过滤器选项
-    fillFilters(summary);
+    const [summary,tl,zones,reports,fams]=await Promise.all([
+      api(ZQ('/api/summary')),api(ZQ('/api/timeline')),api(ZQ('/api/zones')),api('/api/reports'),api(ZQ('/api/families'))]);
+    renderSnapshot(meta,summary,tl,zones,fams);renderReports(reports);
 
     // 预载日志（仅回放模式需要）
     if(state.mode !== 'live'){
@@ -797,112 +1206,84 @@ function startLive(){
     '<div class="empty" id="liveWait">等待数据源…（窗口满 60s 后才会出现异常判定）</div>');
   let offline = false;
   let lastErr = '';
+  let polling=false;
 
   /* 日志流：800ms 增量拉取 */
   const poll = async ()=>{
+    if(polling)return;polling=true;const version=state.streamVersion;
     try{
       const d = await api('/api/live/logs?since=' + state.liveCursor);
-
-      /* ★ 处理"数据流重启"与"游标倒退"，否则会重复显示已看过的日志。
-         看板重启后 records 从 0 重新计数，而前端还攥着重启前的游标；
-         按旧游标取不到数据、返回的 next 反而更小，前端老实照做就会
-         在 records 涨回来之后把老日志再发一遍 —— 界面上就是一堆重复行。 */
-      if(d.reset || (d.epoch !== undefined && d.epoch !== state.liveEpoch)){
-        state.liveEpoch = d.epoch;
-        state.liveCursor = 0;
+      if(version!==state.streamVersion)return;
+      // 兼容现有后端的数据流世代号；重连后清除上一轮日志。
+      if(d.reset || (state.liveEpoch !== null && d.epoch !== undefined && d.epoch !== state.liveEpoch)
+          || (typeof d.next === 'number' && d.next < state.liveCursor)){
         stream.innerHTML = '';
         lastErr = '';
-        stream.insertAdjacentHTML('beforeend',
-          `<div class="logline" style="color:var(--amber);border-left-color:var(--amber)">
-             <span class="t">${'------.------'}</span><span class="lv W">RESET</span>
-             <span class="tag">数据流已重启（看板重连或换了数据源），日志流已清空重来</span></div>`);
-      }else if(d.epoch !== undefined){
-        state.liveEpoch = d.epoch;
       }
-      if(typeof d.next === 'number' && d.next < state.liveCursor){
-        /* 双保险：不管后端有没有给 reset 标记，游标倒退了就重置 */
-        state.liveCursor = 0;
-        stream.innerHTML = '';
-      }
+      if(d.epoch !== undefined) state.liveEpoch = d.epoch;
       state.liveCursor = d.next;
 
       const badge = $('#modeBadge');
+      badge.classList.toggle('offline',!d.online);
+      $('#srcName').textContent=liveLabel(d.online);
       if(d.online){
-        if(offline){ offline = false; badge.classList.remove('offline');
-                     $('#srcName').textContent = liveLabel(true);
-                     setStreamChip('live', '实时 · ' + (state.isSim ? '模拟器进程' : '串口 ' + state.liveSource));
-                     setRcState('', '重新连接'); }
-      }else if(!offline){
-        offline = true; badge.classList.add('offline');
-        $('#srcName').textContent = liveLabel(false);
-        setStreamChip('offline', '数据源已断开 —— 日志流停止增长');
-        setRcState('need', '重新连接');
-        /* 掉线后自动触发一次强制重连：子进程是钉在端口号上重试的，
-           板子拔了再插可能换成别的 COM 号，靠它自己等不回来。
-           自动来一次，用户通常不用手动点。 */
-        setTimeout(()=>{ if(offline) forceReconnect(true); }, 3000);
+        offline=false;setStreamChip('live','实时 · '+(state.isSim?'模拟器进程':'串口 '+state.liveSource));
+        if(!rcBusy)setRcState('','重新连接');
+      }else{
+        setStreamChip('offline','数据源已断开 —— 日志流停止增长');
+        if(!rcBusy)setRcState('need','重新连接');
+        if(!offline)setTimeout(()=>{if(offline)forceReconnect(true);},3000);
+        offline=true;
       }
       /* 离线原因直接写在流里，省得还要去翻接口 */
       if(!d.online && d.error && lastErr !== d.error){
         lastErr = d.error;
         stream.insertAdjacentHTML('beforeend',
-          `<div class="logline" style="color:var(--crimson);border-left-color:var(--crimson)">
+          `<div class="logline status-line">
              <span class="t">${'------.------'}</span><span class="lv E">OFFLINE</span>
-             <span class="tag">${escHtml(d.error)}</span></div>`);
+             <span class="status-message">${escHtml(d.error)}</span></div>`);
       }
 
       const wait = $('#liveWait');
       if(wait && d.items.length) wait.remove();
 
       d.items.forEach(r=>{
+        if((r.level==='E'||r.level==='F') && r.raw){
+          const alertKey=String(r.ts)+'|'+r.raw;
+          if(alertKey!==state.lastAlertKey){ state.lastAlertKey=alertKey; playUiSound('alert'); }
+        }
         if(!logMatches(r)) return;
         stream.insertAdjacentHTML('beforeend', logLineHTML(r));
       });
       while(stream.querySelectorAll('.logline').length > 400) stream.removeChild(stream.firstChild);
-      if(d.items.length) stream.scrollTop = stream.scrollHeight;
+      if(d.items.length && state.followLogs)stream.scrollTop=stream.scrollHeight;
       $('#streamCnt').textContent = state.liveCursor + ' 行（实时）';
     }catch(e){
       $('#modeBadge').classList.add('offline');
       $('#srcName').textContent = '离线 · 看板连接断开';
       setStreamChip('offline', '与看板后端的连接已断开');
-    }
+    }finally{polling=false;}
   };
   poll();
   state.liveTimer = setInterval(poll, 800);
 
   /* 面板：3s 刷新一次汇总/时间线/分区（服务端有 2s 节流，不会算重）
      —— 实时模式下这几块不刷新的话，永远停在启动那一刻的空数据上。 */
-  const refreshPanels = async ()=>{
-    try{
-      const [meta, summary, tl, zones, fams] = await Promise.all([
-        api(ZQ('/api/meta')), api(ZQ('/api/summary')), api(ZQ('/api/timeline')),
-        api(ZQ('/api/zones')), api(ZQ('/api/families'))
-      ]);
-      renderDeviceMode(meta.device_mode);
-      $('#kLines').textContent = meta.records.toLocaleString();
-      $('#kParse').innerHTML = meta.parse_rate + '<span class="u">%</span>';
-      $('#kDur').textContent = fmtDur(meta.duration_s);
-      $('#kAnom').textContent = meta.anomaly_windows + ' / ' + meta.windows;
-      renderFaults(summary);
-      renderFamilies(fams);
-      renderTimeline(tl);
-      renderZones(zones);
-      fillFilters(summary);
-    }catch(e){ /* 面板刷新失败不影响日志流 */ }
-  };
-  state.panelTimer = setInterval(refreshPanels, 3000);
+  state.panelTimer=setInterval(async()=>{
+    if(state.panelBusy)return;state.panelBusy=true;
+    try{await refreshPanels();}finally{state.panelBusy=false;}
+  },3000);
 }
 
 /* ── 过滤器选项：可重复调用（实时模式下分区/标签会陆续出现）────────── */
 function fillFilters(summary){
-  const fz = $('#fZone'), ft = $('#fTag');
-  const keepZ = fz.value, keepT = ft.value;
-  fz.innerHTML = '<option value="">全部棚区</option>' +
-    summary.zones.map(z=>`<option value="${z.zone}">${z.zone} 棚 (${z.count})</option>`).join('');
-  ft.innerHTML = '<option value="">全部模块</option>' +
-    summary.tags.map(t=>`<option value="${t.tag}">${t.tag} (${t.count})</option>`).join('');
-  if(keepZ) fz.value = keepZ;
-  if(keepT) ft.value = keepT;
+  for(const [id,key,field,label] of [['#fZone','zones','zone','全部设备'],['#fTag','tags','tag','全部模块']]){
+    const el=$(id),active=state.filter[field];
+    const entries=(summary[key]||[]).filter(item=>item[field] && (field!=='zone'||item[field]!=='-'));
+    let options='<option value="">'+label+'</option>'+entries.map(item=>`<option value="${escHtml(item[field])}">${escHtml(item[field])} (${item.count})</option>`).join('');
+    if(active && !entries.some(item=>item[field]===active))options+=`<option value="${escHtml(active)}">${escHtml(active)}（当前无数据）</option>`;
+    if(el.innerHTML!==options){el.innerHTML=options;el.value=active;}
+  }
 }
 
 /* ── 异常族聚合 ─────────────────────────────────────────────────────── */
@@ -941,28 +1322,15 @@ function renderFaults(s){
 
 /* ── 时间线（自绘 Canvas）───────────────────────────────────────────── */
 function renderTimeline(tl){
-  state.lastTimeline = tl;          /* 缓存，尺寸变化时直接重绘不用重新拉接口 */
-  redrawTimeline();
-}
-
-/** 只重画时间线，不动 DOM。尺寸变化时走这条路。 */
-function redrawTimeline(){
-  const cv = $('#tlCanvas'); if(!cv) return;
-  const tl = state.lastTimeline || [];
-
-  /* ★ 尺寸从元素自身读（CSS 是 width:100%; height:100%），
-     JS 只把 backing store 按 dpr 对齐。
-     原来写死 H=150 并 cv.style.height='150px' 内联覆盖 CSS，
-     面板拉高之后就是上面一小条图、下面一大片空白。 */
-  const W = cv.clientWidth, H = cv.clientHeight;
-  if(W < 40 || H < 30) return;
+  state.timeline=tl;
+  const cv = $('#tlCanvas'), box = cv.parentElement;
   const dpr = window.devicePixelRatio || 1;
-  const bw = Math.round(W*dpr), bh = Math.round(H*dpr);
-  if(cv.width !== bw || cv.height !== bh){ cv.width = bw; cv.height = bh; }
-  const g = cv.getContext('2d');
-  g.setTransform(dpr,0,0,dpr,0,0);
+  const W = Math.max(180, box.clientWidth - 20);
+  const H = Math.max(150, box.clientHeight - 10);
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+'px';
+  const g = cv.getContext('2d'); g.scale(dpr,dpr);
   g.clearRect(0,0,W,H);
-  if(!tl.length) return;
+  if(!tl.length){$('#tlRange').textContent='等待日志数据';closeTimelineDetail();return;}
 
   const padL=34, padB=16, padT=8;
   const plotW = W-padL-4, plotH = H-padT-padB;
@@ -974,7 +1342,7 @@ function redrawTimeline(){
   g.strokeStyle='rgba(120,200,170,.1)'; g.lineWidth=1;
   for(let i=0;i<=4;i++){ const yy=padT+plotH*i/4;
     g.beginPath(); g.moveTo(padL,yy); g.lineTo(W-4,yy); g.stroke();
-    g.fillStyle='#44544f'; g.font='9px monospace'; g.textAlign='right';
+    g.fillStyle='#91aaa1'; g.font='11px monospace'; g.textAlign='right';
     g.fillText(Math.round(maxV*(1-i/4)), padL-6, yy+3);
   }
   // 堆叠面积：ERROR(底) → WARN → INFO
@@ -992,452 +1360,324 @@ function redrawTimeline(){
   stack('E','rgba(255,77,77,.85)', bIW);
 
   // 时间刻度
-  g.fillStyle='#44544f'; g.font='9px monospace'; g.textAlign='center';
+  g.fillStyle='#91aaa1'; g.font='11px monospace'; g.textAlign='center';
   [0, Math.floor(tl.length/2), tl.length-1].forEach(i=>{
     if(tl[i]) g.fillText(fmtDur(tl[i].t), x(i), H-4);
   });
+  $('#tlHint').textContent=(tl[0]?.step||1)>1?'每 '+tl[0].step+' 秒聚合':'按秒聚合';
   $('#tlRange').textContent = fmtDur(tl[0].t) + ' → ' + fmtDur(tl[tl.length-1].t);
+  if($('#timelineModal').classList.contains('open')) requestAnimationFrame(renderTimelineDetail);
+}
+
+/* ── 日志密度详情：堆叠柱状图 + 悬停精确值 ─────────────────────────── */
+function selectedTimeline(){
+  const full=state.timeline, max=full.length-1;
+  if(max<0) return [];
+  if(state.timelineFollow || state.timelineEnd==null || state.timelineEnd>max) state.timelineEnd=max;
+  state.timelineStart=Math.max(0,Math.min(state.timelineStart,max));
+  state.timelineEnd=Math.max(0,Math.min(state.timelineEnd,max));
+  if(state.timelineStart>state.timelineEnd) state.timelineStart=state.timelineEnd;
+  const start=$('#tlRangeStart'), end=$('#tlRangeEnd'), fill=$('#tlRangeFill');
+  start.max=max; end.max=max; start.value=state.timelineStart; end.value=state.timelineEnd;
+  const left=max ? state.timelineStart/max*100 : 0;
+  const width=max ? (state.timelineEnd-state.timelineStart)/max*100 : 100;
+  fill.style.left=left+'%'; fill.style.width=width+'%';
+  const slice=full.slice(state.timelineStart,state.timelineEnd+1);
+  $('#tlRangeLabel').textContent=fmtDur(slice[0].t)+' → '+fmtDur(slice.at(-1).t);
+  return slice;
+}
+function updateTimelineDetailSummary(tl){
+  const sum=key=>tl.reduce((n,d)=>n+(d[key]||0),0);
+  const max=Math.max(...tl.map(d=>(d.I||0)+(d.W||0)+(d.E||0)));
+  $('#tlInfoTotal').textContent=sum('I').toLocaleString();
+  $('#tlWarnTotal').textContent=sum('W').toLocaleString();
+  $('#tlErrorTotal').textContent=sum('E').toLocaleString();
+  $('#timelineMeta').textContent=fmtDur(tl[0].t)+' → '+fmtDur(tl.at(-1).t);
+  $('#tlDetailHint').textContent=tl.length+' 段 · 峰值 '+max+' 行';
+}
+function openTimelineDetail(){
+  const tl=state.timeline;
+  if(!tl.length) return;
+  playUiSound('open');
+  state.timelineStart=0;state.timelineEnd=tl.length-1;state.timelineFollow=true;$('#tlFollow').checked=true;
+  state.timelineHover=-1;
+  $('#timelineModal').classList.add('open');
+  $('#timelineModal').setAttribute('aria-hidden','false');
+  requestAnimationFrame(renderTimelineDetail);
+}
+function closeTimelineDetail(){
+  state.timelineHover=-1;
+  $('#timelineModal').classList.remove('open');
+  $('#timelineModal').setAttribute('aria-hidden','true');
+  $('#tlTooltip').style.display='none';
+}
+function renderTimelineDetail(){
+  const full=state.timeline, cv=$('#timelineDetailCanvas'), box=cv.parentElement;
+  if(!full.length || !$('#timelineModal').classList.contains('open')) return;
+  const tl=selectedTimeline();
+  if(!tl.length) return;
+  if(state.timelineHover>=tl.length) state.timelineHover=-1;
+  updateTimelineDetailSummary(tl);
+  const dpr=window.devicePixelRatio||1;
+  const W=Math.max(240,box.clientWidth), H=Math.max(230,box.clientHeight);
+  cv.width=W*dpr;cv.height=H*dpr;
+  const g=cv.getContext('2d');g.scale(dpr,dpr);g.clearRect(0,0,W,H);
+  const pad={l:58,r:20,t:18,b:42}, plotW=W-pad.l-pad.r, plotH=H-pad.t-pad.b;
+  const maxV=Math.max(1,...tl.map(d=>(d.I||0)+(d.W||0)+(d.E||0)));
+  const x=i=>pad.l+(i/(tl.length-1||1))*plotW;
+  const y=v=>pad.t+plotH-(v/maxV)*plotH;
+  g.font='11px monospace';g.lineWidth=1;
+  for(let i=0;i<=4;i++){
+    const yy=pad.t+plotH*i/4;
+    g.strokeStyle='rgba(120,200,170,.13)';g.beginPath();g.moveTo(pad.l,yy);g.lineTo(W-pad.r,yy);g.stroke();
+    g.fillStyle='#91aaa1';g.textAlign='right';g.fillText(Math.round(maxV*(1-i/4)),pad.l-8,yy+4);
+  }
+  const barW=Math.max(1,Math.min(10,plotW/tl.length*.72));
+  tl.forEach((d,i)=>{
+    const xx=x(i)-barW/2, info=d.I||0,warn=d.W||0,error=d.E||0;
+    let base=0;
+    [[info,'rgba(60,230,139,.78)'],[warn,'rgba(255,176,46,.9)'],[error,'rgba(255,77,77,.95)']].forEach(([v,color])=>{
+      if(!v)return;const top=base+v;g.fillStyle=color;g.fillRect(xx,y(top),barW,y(base)-y(top));base=top;
+    });
+  });
+  g.strokeStyle='rgba(120,200,170,.32)';g.beginPath();g.moveTo(pad.l,pad.t);g.lineTo(pad.l,H-pad.b);g.lineTo(W-pad.r,H-pad.b);g.stroke();
+  for(let i=0;i<=5;i++){
+    const idx=Math.round((tl.length-1)*i/5), xx=x(idx);
+    if(i>0 && idx===Math.round((tl.length-1)*(i-1)/5))continue;
+    g.strokeStyle='rgba(120,200,170,.14)';g.beginPath();g.moveTo(xx,pad.t);g.lineTo(xx,H-pad.b);g.stroke();
+    g.fillStyle='#91aaa1';g.textAlign='center';g.fillText(fmtDur(tl[idx].t),xx,H-16);
+  }
+  if(state.timelineHover>=0 && tl[state.timelineHover]){
+    const xx=x(state.timelineHover);g.strokeStyle='rgba(207,232,221,.75)';g.lineWidth=1;
+    g.beginPath();g.moveTo(xx,pad.t);g.lineTo(xx,H-pad.b);g.stroke();
+  }
+  g.fillStyle='#91aaa1';g.textAlign='center';g.fillText('日志时间',W/2,H-3);
 }
 
 /* ── 大棚卡片 ───────────────────────────────────────────────────────── */
-/* ══ 环境曲线 ══════════════════════════════════════════════════════════
-   三种指标各有自己的量纲：温度 ℃、湿度 %、光照（AP3216C 原始值）。
-   直接把三条线画在一个坐标系里，光照会把温湿度压成一条直线 ——
-   所以"全部"模式下【每条曲线各自归一化到自己的 min~max】，
-   这样看的是【变化趋势是否同步】，而不是绝对数值大小。
-   要读绝对数值就切到单指标模式，那时纵轴是真实刻度。
-   ═══════════════════════════════════════════════════════════════════ */
-const METRICS = {
-  temp:  {key:'temp',  name:'温度', unit:'℃', color:'#ffb02e'},
-  humi:  {key:'humi',  name:'湿度', unit:'%',  color:'#46c8d8'},
-  light: {key:'light', name:'光照', unit:'',   color:'#3ce68b'},
-};
-const ZONE_COLORS = ['#3ce68b','#ffb02e','#46c8d8','#9d7bff','#ff4d4d','#7fd1ff'];
-
-function activeMetrics(){
-  const m = state.metric || 'all';
-  return m === 'all' ? ['temp','humi','light'] : [m];
-}
-
 function renderZones(zones){
   const box = $('#zoneGrid');
-  const ids = Object.keys(zones).sort();
-  state.lastZones = zones;              /* 放大浮层与指标切换都要复用这份数据 */
-
-  /* ★ 设备集合没变时【只重绘 canvas，不重建 DOM】。
-     原来每次（含每 3 秒的自动刷新）都重建整个 innerHTML，有两个坏处：
-       1. 闪烁，而且日志流的滚动位置之类的状态会丢
-       2. 重建会改变被观察元素自身的尺寸 → 触发 ResizeObserver 的循环保护，
-          后续回调被节流甚至不再触发，表现就是"改了窗口大小图不跟着变" */
-  const sig = ids.join(',');
-  if(sig === state.zoneSig){
-    redrawZones();
-    return;
-  }
-  state.zoneSig = sig;
-
-  if(!ids.length){
-    state.zoneSig = '';
-    box.innerHTML = '<div class="empty">无设备数据</div>';
-    return;
-  }
-  box.classList.toggle('one', ids.length === 1);
-  $('#zoneCnt').textContent = ids.length + ' 个设备';
-
+  const ids=Object.keys(zones).sort();state.lastZones=zones;
+  $('#zoneCnt').textContent=ids.length+' 个设备';
+  if(state.envZone && !zones[state.envZone])closeEnvDetail();
+  const signature=JSON.stringify(ids.map(z=>[z,zones[z].name]));
+  if(!ids.length){state.zoneSig=null;box.innerHTML='<div class="empty">无设备数据</div>';return;}
+  if(signature!==state.zoneSig){state.zoneSig=signature;
   box.innerHTML = ids.map(z=>`
-    <div class="zcard">
-      <div class="zh"><span class="zz">${z}</span><span class="zn">${zones[z].name}</span></div>
-      <canvas id="zc_${z}" data-zone="${z}"></canvas>
-      <div class="zrow"><span>温度</span><span id="zt_${z}" style="color:${METRICS.temp.color}">–</span></div>
-      <div class="zrow"><span>湿度</span><span id="zh_${z}" style="color:${METRICS.humi.color}">–</span></div>
-      <div class="zrow"><span>光照</span><span id="zl_${z}" style="color:${METRICS.light.color}">–</span></div>
-    </div>`).join('');
-  redrawZones();
-  /* DOM 重建后新卡片不在 ResizeObserver 的观察列表里，要重新挂上 */
-  if(state.__observeZoneCards) state.__observeZoneCards();
-}
-
-/** 只重画所有曲线画布，不动 DOM。窗口/面板尺寸变化时走这条路。 */
-function redrawZones(){
-  const zones = state.lastZones || {};
-  Object.keys(zones).forEach(z=>drawZone(z, zones[z]));
-}
-
-/** 画一条曲线。norm=true 时按自身 min~max 归一化（多指标叠加用） */
-function plotSeries(g, arr, W, H, color, norm, lo, hi){
-  const vals = arr.filter(x=>x!=null);
-  if(vals.length < 2) return null;
-  let a = lo, b = hi;
-  if(norm || a == null){
-    a = Math.min(...vals);
-    b = Math.max(...vals);
+    <div class="zcard" id="zcard_${z}" role="button" tabindex="0" title="查看 ${z} 棚环境详情">
+      <div class="zh"><span class="zz">${z}</span><span class="zn">${escHtml(zones[z].name)}</span></div>
+      <div class="zchart-shell"><canvas id="zc_${z}" data-zone="${z}"></canvas></div>
+      <div class="zrow"><span>温度</span><span id="zt_${z}" style="color:var(--amber)">–</span></div>
+      <div class="zrow"><span>湿度</span><span id="zh_${z}" style="color:var(--cyan)">–</span></div>
+      <div class="zrow"><span>光照</span><span id="zl_${z}" style="color:var(--phosphor)">–</span></div>
+    </div>`).join('')+(ids.length===1?'<div class="zblank" aria-hidden="true"></div>':'');
+    box.scrollTop=0;
   }
-  const span = (b - a) || 1;
-  g.beginPath();
-  let started = false;
-  arr.forEach((v,i)=>{
-    if(v == null) return;
-    const px = (arr.length>1 ? i/(arr.length-1) : 0) * W;
-    const py = H - 3 - ((v - a)/span) * (H - 8);
-    started ? g.lineTo(px,py) : (g.moveTo(px,py), started = true);
+  ids.forEach(z=>{
+    drawZone(z, zones[z]);
+    const card=$('#zcard_'+z);
+    card.onclick=()=>openEnvDetail(z,state.lastZones[z]);
+    card.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openEnvDetail(z,state.lastZones[z]); } };
   });
-  g.strokeStyle = color; g.lineWidth = 1.6; g.stroke();
-  return {lo:a, hi:b};
+  if(state.envZone && zones[state.envZone]) renderEnvDetail(state.envZone,zones[state.envZone]);
 }
 
 function drawZone(z, d){
   const cv = document.getElementById('zc_'+z); if(!cv) return;
+  const dpr = window.devicePixelRatio||1;
+  const W=Math.max(1,cv.parentElement.clientWidth),H=Math.max(1,cv.parentElement.clientHeight);
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+'px'; cv.style.height=H+'px';
+  const g=cv.getContext('2d'); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
 
-  /* ★ 尺寸从【元素自身】读，不从父容器算。
-     CSS 里写的是 width:100%，高度由 flex 撑开，
-     所以 clientWidth/clientHeight 永远等于当前真实尺寸 ——
-     容器变了它就是新的，不需要谁来通知。
-     JS 只做一件事：把 backing store（cv.width/height）按 dpr 对齐，
-     再按逻辑尺寸画。 */
-  const W = cv.clientWidth, H = cv.clientHeight;
-  if(W < 20 || H < 10) return;                    /* 面板被隐藏/还没布局完 */
-  const dpr = window.devicePixelRatio || 1;
-  const bw = Math.round(W*dpr), bh = Math.round(H*dpr);
-  if(cv.width !== bw || cv.height !== bh){        /* 只有尺寸真变了才重置，避免清空 */
-    cv.width = bw; cv.height = bh;
-  }
-  const g = cv.getContext('2d');
-  g.setTransform(dpr,0,0,dpr,0,0);
-  g.clearRect(0,0,W,H);
-
-  const ms = activeMetrics();
-  if(ms.length === 1){
-    /* 单指标：用真实刻度，并在左上角标出数值范围 */
-    const m = METRICS[ms[0]];
-    const r = plotSeries(g, d[m.key], W, H, m.color, false);
-    if(r){
-      g.fillStyle = 'rgba(255,255,255,.28)';
-      g.font = '9px monospace';
-      g.fillText(r.hi.toFixed(m.key==='light'?0:1) + m.unit, 2, 9);
-      g.fillText(r.lo.toFixed(m.key==='light'?0:1) + m.unit, 2, H-2);
-    }
-  }else{
-    /* 全部：各画各的归一化曲线，看趋势同步性 */
-    ms.forEach(k=>plotSeries(g, d[METRICS[k].key], W, H, METRICS[k].color, true));
-  }
+  const draw=(arr,color)=>{
+    const v = arr.filter(x=>x!=null); if(v.length<2) return;
+    const lo=Math.min(...v), hi=Math.max(...v), span=(hi-lo)||1;
+    g.beginPath();
+    arr.forEach((val,i)=>{
+      if(val==null) return;
+      const px = i/(arr.length-1)*W;
+      const py = H-2 - ((val-lo)/span)*(H-5);
+      i===0?g.moveTo(px,py):g.lineTo(px,py);
+    });
+    g.strokeStyle=color; g.lineWidth=1.3; g.stroke();
+  };
+  draw(d.temp,'rgba(255,176,46,.9)');
+  draw(d.humi,'rgba(70,200,216,.75)');
 
   const last = a => { for(let i=a.length-1;i>=0;i--) if(a[i]!=null) return a[i]; return null; };
   const t=last(d.temp), h=last(d.humi), l=last(d.light);
-  const set=(id,v)=>{ const el=$('#'+id); if(el) el.textContent=v; };
-  set('zt_'+z, t!=null ? t.toFixed(1)+'℃' : '–');
-  set('zh_'+z, h!=null ? h.toFixed(1)+'%' : '–');
-  set('zl_'+z, l!=null ? l : '–');
+  $('#zt_'+z).textContent = t!=null ? t.toFixed(1)+'℃' : '–';
+  $('#zh_'+z).textContent = h!=null ? h.toFixed(1)+'%' : '–';
+  $('#zl_'+z).textContent = l!=null ? l : '–';
 }
 
-/* ── 放大浮层：所有设备叠在一张大图上 ─────────────────────────────── */
-function drawBigChart(){
-  const cv = $('#bigCanvas'); if(!cv) return;
-  const zones = state.lastZones || {};
-  const ids = Object.keys(zones).sort();
-  const ms = activeMetrics();
-
-  /* 同样从【元素自身】读尺寸（CSS 是 width:100%; height:100%），
-     只把 backing store 按 dpr 对齐；尺寸没变就不重置画布，避免闪。 */
-  const W = cv.clientWidth, H = cv.clientHeight;
-  if(W < 60 || H < 60) return;                    /* 浮层刚打开还没布局完 */
-  const dpr = window.devicePixelRatio || 1;
-  const bw = Math.round(W*dpr), bh = Math.round(H*dpr);
-  if(cv.width !== bw || cv.height !== bh){ cv.width = bw; cv.height = bh; }
-  const g = cv.getContext('2d');
-  g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-
-  const padL = 52, padR = 14, padT = 14, padB = 26;
-  const iw = W-padL-padR, ih = H-padT-padB;
-  if(iw < 40 || ih < 40 || !ids.length) return;
-
-  /* 多指标叠在一起时各归一化；单指标时用全局 min~max，这样设备间可比 */
-  let globalLo = null, globalHi = null;
-  if(ms.length === 1){
-    const k = METRICS[ms[0]].key;
-    const all = ids.flatMap(z=>(zones[z][k]||[]).filter(x=>x!=null));
-    if(all.length){ globalLo = Math.min(...all); globalHi = Math.max(...all); }
-  }
-
-  /* 网格与纵轴刻度 */
-  g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1;
-  g.fillStyle = 'rgba(255,255,255,.3)'; g.font = '10px monospace';
-  for(let i=0;i<=4;i++){
-    const y = padT + ih*i/4;
-    g.beginPath(); g.moveTo(padL,y); g.lineTo(padL+iw,y); g.stroke();
-    if(globalLo != null){
-      const v = globalHi - (globalHi-globalLo)*i/4;
-      const u = ms.length===1 ? METRICS[ms[0]].unit : '';
-      g.fillText(v.toFixed(ms.length===1&&ms[0]==='light'?0:1)+u, 4, y+3);
-    }
-  }
-  /* 时间轴刻度 */
-  const tArr = ids.length ? (zones[ids[0]].t||[]) : [];
-  if(tArr.length > 1){
-    const t0 = tArr[0], t1 = tArr[tArr.length-1];
-    g.fillStyle = 'rgba(255,255,255,.3)';
-    for(let i=0;i<=6;i++){
-      const x = padL + iw*i/6;
-      g.beginPath(); g.moveTo(x,padT); g.lineTo(x,padT+ih); g.stroke();
-      g.fillText(fmtDur(t0 + (t1-t0)*i/6), x-14, H-8);
-    }
-  }
-
-  /* 曲线：每个设备一条线 */
-  const legend = [];
-  ids.forEach((z, zi)=>{
-    ms.forEach(k=>{
-      const m = METRICS[k];
-      const color = ms.length === 1 ? ZONE_COLORS[zi % ZONE_COLORS.length] : m.color;
-      const arr = zones[z][m.key] || [];
-      const vals = arr.filter(x=>x!=null);
-      if(vals.length < 2) return;
-      let a = globalLo, b = globalHi;
-      if(a == null){ a = Math.min(...vals); b = Math.max(...vals); }
-      const span = (b-a)||1;
-      g.beginPath();
-      let started = false;
-      arr.forEach((v,i)=>{
-        if(v == null) return;
-        const px = padL + (arr.length>1 ? i/(arr.length-1) : 0)*iw;
-        const py = padT + ih - ((v-a)/span)*ih;
-        started ? g.lineTo(px,py) : (g.moveTo(px,py), started = true);
-      });
-      g.strokeStyle = color;
-      g.lineWidth = ms.length === 1 ? 2 : 1.5;
-      g.globalAlpha = ms.length === 1 ? 1 : (k==='light'?0.55:0.85);
-      g.stroke();
-      g.globalAlpha = 1;
-      if(zi === 0 || ms.length === 1)
-        legend.push(`<span><i style="background:${color}"></i>${ms.length===1?z+' '+zones[z].name:m.name}</span>`);
-    });
-  });
-  $('#bigLegend').innerHTML = legend.join('');
-  $('#bigHint').textContent = ms.length === 1
-    ? `${ids.length} 个设备叠图 ｜ 纵轴为真实刻度`
-    : '各曲线已按自身范围归一化 —— 看的是趋势是否同步，不是绝对大小';
+/* ── 大棚环境详情：双 Y 轴温湿曲线 ─────────────────────────────────── */
+function lastValue(a){
+  for(let i=a.length-1;i>=0;i--) if(a[i]!=null) return a[i];
+  return null;
 }
-
-/* ══ 可拖动面板边框 ═══════════════════════════════════════════════════
-   拖拽条的位置不写死，而是【按面板实际边界算】——
-   网格有媒体查询、面板可能 display:none，写死坐标一定会错位。
-   拖动只改 .grid 上的 CSS 变量，浏览器自己重排。
-   ═══════════════════════════════════════════════════════════════════ */
-const LAYOUT_DEFAULT = { gc1:'268px', gc3:'400px', gr1:'170px', gr2:'150px' };
-const LAYOUT_LIMITS = {
-  gc1: [170, 460],    /* 左列宽 */
-  gc3: [240, 760],    /* 右列宽 */
-  gr1: [110, 420],    /* 第一行高 */
-  gr2: [ 90, 420],    /* 第二行高 */
+/* 环境详情可筛选的三条曲线：颜色与统计卡片 / 图例保持一致 */
+const ENV_METRICS = {
+  temp:  {key:'temp',  short:'温度', label:'温度 (°C)', color:'#ffb02e', fmt:v=>v.toFixed(1)},
+  humi:  {key:'humi',  short:'湿度', label:'湿度 (%)',  color:'#46c8d8', fmt:v=>v.toFixed(1)},
+  light: {key:'light', short:'光照', label:'光照 (lx)', color:'#3ce68b', fmt:v=>String(Math.round(v))}
 };
-const LAYOUT_KEY = 'agri.layout';
-
-/** 读回上次保存的布局（刷新页面后不会跳回默认） */
-function loadLayout(){
-  const grid = $('#grid'); if(!grid) return;
-  let saved = null;
-  try{ saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); }catch(e){}
-  if(saved){
-    Object.keys(LAYOUT_DEFAULT).forEach(k=>{
-      const v = parseFloat(saved[k]);
-      const lim = LAYOUT_LIMITS[k];
-      if(isFinite(v) && v >= lim[0] && v <= lim[1]) grid.style.setProperty('--'+k, v+'px');
-    });
+/* 把"当前筛选的是哪条曲线"同步到卡片、图例、坐标轴文案。
+   三处必须一起变，否则会出现"卡片高亮了、图例还显示两条"的自相矛盾。 */
+function syncEnvStats(){
+  const active = state.envMetric;
+  document.querySelectorAll('#envModal .env-stat').forEach(el=>{
+    const on = !!active && el.dataset.metric === active;
+    el.classList.toggle('is-on', on);
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const wrap = $('#envModal .env-stats');
+  if(wrap) wrap.classList.toggle('is-filtering', !!active);
+  // 默认只画温度+湿度，所以光照图例默认隐藏；筛选时只留选中的那一条
+  document.querySelectorAll('#envModal .env-legend span[data-metric]').forEach(el=>{
+    const m = el.dataset.metric;
+    const show = active ? m === active : (m === 'temp' || m === 'humi');
+    el.classList.toggle('off', !show);
+  });
+  const left=$('#envAxisLeft'), right=$('#envAxisRight'), help=$('#envRangeHelp');
+  if(active && ENV_METRICS[active]){
+    const meta=ENV_METRICS[active];
+    left.textContent='纵轴：'+meta.label; left.className=active;
+    right.style.visibility='hidden';
+    if(help) help.textContent='正在只看'+meta.short+'曲线；再次点击「'+meta.short+'」卡片恢复温湿度对比';
+  }else{
+    left.textContent='左轴：温度 (°C)'; left.className='temp';
+    right.style.visibility='visible'; right.textContent='右轴：湿度 (%)'; right.className='humi';
+    if(help) help.textContent='拖动左右滑块选择时间段；点击上方卡片可只看单项曲线';
   }
-  updateLayoutHint();
 }
-
-function saveLayout(){
-  const grid = $('#grid'); if(!grid) return;
-  const cs = getComputedStyle(grid);
-  const o = {};
-  Object.keys(LAYOUT_DEFAULT).forEach(k=>{ o[k] = cs.getPropertyValue('--'+k).trim(); });
-  try{ localStorage.setItem(LAYOUT_KEY, JSON.stringify(o)); }catch(e){}
+/* 点击卡片：同一张再点 = 退出筛选；点另一张 = 切换筛选目标 */
+function setEnvMetric(metric){
+  if(!ENV_METRICS[metric]) return;
+  state.envMetric = (state.envMetric === metric) ? '' : metric;
+  syncEnvStats();
+  const d = selectedEnvData();
+  if(d){ updateEnvSummary(d); renderEnvChart(d); }
 }
-
-/** 布局是否偏离默认值 —— 偏离才显示"已自定义"提示 */
-function isLayoutCustomized(){
-  const grid = $('#grid'); if(!grid) return false;
-  const cs = getComputedStyle(grid);
-  return Object.keys(LAYOUT_DEFAULT).some(k=>{
-    const cur = parseFloat(cs.getPropertyValue('--'+k));
-    const def = parseFloat(LAYOUT_DEFAULT[k]);
-    return isFinite(cur) && Math.abs(cur - def) > 2;
-  });
+function openEnvDetail(z,d){
+  if(!d)return;state.envFollow=true;$('#envFollow').checked=true;
+  playUiSound('open');
+  state.envZone=z;
+  state.envMetric='';            /* 每次打开先回到温湿度对比 */
+  state.envStart=0;
+  state.envEnd=Math.max(0,(d.t||[]).length-1);
+  $('#envModal').classList.add('open');
+  $('#envModal').setAttribute('aria-hidden','false');
+  syncEnvStats();
+  renderEnvDetail(z,d);
 }
-function updateLayoutHint(){
-  const h = $('#layoutHint'); if(!h) return;
-  h.classList.toggle('on', isLayoutCustomized());
+function closeEnvDetail(){
+  state.envZone='';
+  state.envData=null;
+  state.envMetric='';
+  $('#envModal').classList.remove('open');
+  $('#envModal').setAttribute('aria-hidden','true');
 }
-
-/** ★ 一键还原布局：Ctrl+Alt+R，或点标题栏的"已自定义"提示 */
-function resetLayout(){
-  const grid = $('#grid'); if(!grid) return;
-  Object.keys(LAYOUT_DEFAULT).forEach(k=>grid.style.setProperty('--'+k, LAYOUT_DEFAULT[k]));
-  try{ localStorage.removeItem(LAYOUT_KEY); }catch(e){}
-  requestAnimationFrame(()=>{
-    layoutSplitters(); relayoutZones();
-    updateLayoutHint();
-  });
+function selectedEnvData(){
+  const full=state.envData;
+  if(!full || !(full.t||[]).length) return null;
+  const max=full.t.length-1;
+  if(state.envFollow || state.envEnd==null || state.envEnd>max) state.envEnd=max;
+  state.envStart=Math.max(0,Math.min(state.envStart,max));
+  state.envEnd=Math.max(0,Math.min(state.envEnd,max));
+  if(state.envStart>state.envEnd) state.envStart=state.envEnd;
+  const start=$('#envRangeStart'), end=$('#envRangeEnd'), fill=$('#envRangeFill');
+  start.max=max; end.max=max; start.value=state.envStart; end.value=state.envEnd;
+  const left=max ? state.envStart/max*100 : 0;
+  const width=max ? (state.envEnd-state.envStart)/max*100 : 100;
+  fill.style.left=left+'%'; fill.style.width=width+'%';
+  const cut=(a=[])=>a.slice(state.envStart,state.envEnd+1);
+  const data={...full,t:cut(full.t),temp:cut(full.temp),humi:cut(full.humi),light:cut(full.light)};
+  $('#envRangeLabel').textContent=fmtDur(data.t[0])+' → '+fmtDur(data.t.at(-1));
+  return data;
 }
-
-function layoutSplitters(){
-  const grid = $('#grid'); if(!grid) return;
-  if(getComputedStyle(grid).display === 'none') return;
-  const gr = grid.getBoundingClientRect();
-  const q = s => grid.querySelector(s);
-  const faults = q('.faults'), timeline = q('.timeline'),
-        zones = q('.zones'),  stream = q('.stream');
-  if(!faults || !timeline || !faults.offsetParent) return;   /* 小屏时面板可能被隐藏 */
-
-  const fr = faults.getBoundingClientRect();
-  const tr = timeline.getBoundingClientRect();
-  const zr = zones ? zones.getBoundingClientRect() : null;
-  const sr = stream ? stream.getBoundingClientRect() : null;
-
-  /* 竖直：左列右边界、中列右边界（= 右列左边界） */
-  const v1 = fr.right + 5, v2 = tr.right + 5;
-  /* 水平：第一行下边界（faults 只占第一行）、第二行下边界（timeline 占 1~2 行） */
-  const h1 = fr.bottom + 5, h2 = tr.bottom + 5;
-
-  grid.querySelectorAll('.splitter').forEach(sp=>{
-    const k = sp.dataset.k;
-    if(k === 'gc1'){ sp.style.left = (v1-gr.left)+'px'; sp.style.top='0'; sp.style.height='100%'; }
-    if(k === 'gc3'){ sp.style.left = (v2-gr.left)+'px'; sp.style.top='0'; sp.style.height='100%'; }
-    if(k === 'gr1'){ sp.style.top = (h1-gr.top)+'px';  sp.style.left='0'; sp.style.width='100%'; }
-    if(k === 'gr2'){ sp.style.top = (h2-gr.top)+'px';  sp.style.left='0'; sp.style.width='100%'; }
-    /* 被隐藏的面板对应的拖拽条也藏起来 */
-    const hide = (k==='gc3' && !zr) || (k==='gr2' && !sr);
-    sp.style.display = hide ? 'none' : '';
-  });
+function updateEnvSummary(d){
+  const temp=lastValue(d.temp), humi=lastValue(d.humi), light=lastValue(d.light);
+  $('#envTemp').textContent=temp==null?'–':temp.toFixed(1)+' °C';
+  $('#envHumi').textContent=humi==null?'–':humi.toFixed(1)+' %';
+  $('#envLight').textContent=light==null?'–':light;
+  const first=d.t[0], last=d.t.at(-1);
+  $('#envSamples').textContent=d.t.length+' 个采样点 · '+fmtDur(first)+' → '+fmtDur(last);
 }
+function renderEnvDetail(z,d){
+  state.envData=d;
+  $('#envTitle').textContent = z+' 棚 · 环境趋势';
+  $('#envMeta').textContent = d.name || '';
+  const selected=selectedEnvData();
+  if(!selected) return;
+  updateEnvSummary(selected);
+  if($('#envModal').classList.contains('open')) requestAnimationFrame(()=>renderEnvChart(selected));
+}
+function renderEnvChart(d){
+  const cv=$('#envChart'), box=cv.parentElement;
+  const dpr=window.devicePixelRatio||1;
+  const W=Math.max(240,box.clientWidth), H=Math.max(220,box.clientHeight);
+  cv.width=W*dpr; cv.height=H*dpr;
+  const g=cv.getContext('2d'); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
+  const ts=d.t||[], temp=d.temp||[], humi=d.humi||[];
+  if(!ts.length) return;
 
-(function(){
-  const grid = $('#grid'); if(!grid) return;
-  let dragging = null;
-
-  const endDrag = ()=>{
-    if(!dragging) return;
-    dragging.sp.classList.remove('drag');
-    document.body.classList.remove('resizing');
-    dragging = null;
-    saveLayout();
-    updateLayoutHint();
-    setTimeout(()=>{ layoutSplitters(); relayoutZones(); relayout(); }, 60);
+  const pad={l:62,r:62,t:22,b:42}, plotW=W-pad.l-pad.r, plotH=H-pad.t-pad.b;
+  const bounds=a=>{
+    const v=a.filter(Number.isFinite);if(!v.length)return [0,1];const lo=Math.min(...v),hi=Math.max(...v);
+    const edge=Math.max((hi-lo)*.16,.25); return [lo-edge,hi+edge];
   };
+  const single = state.envMetric && ENV_METRICS[state.envMetric] ? ENV_METRICS[state.envMetric] : null;
+  const [tLo,tHi]=bounds(temp), [hLo,hHi]=bounds(humi);
+  const [sLo,sHi]=single ? bounds(d[single.key]||[]) : [0,1];
+  const x=i=>pad.l+(i/(ts.length-1||1))*plotW;
+  const yOf=(lo,hi)=>v=>pad.t+plotH-((v-lo)/(hi-lo))*plotH;
+  const yT=yOf(tLo,tHi), yH=yOf(hLo,hHi), yS=yOf(sLo,sHi);
 
-  grid.querySelectorAll('.splitter').forEach(sp=>{
-    sp.addEventListener('mousedown', e=>{
-      e.preventDefault();
-      const cs = getComputedStyle(grid);
-      dragging = { sp, key: sp.dataset.k, base: parseFloat(cs.getPropertyValue('--'+sp.dataset.k)) };
-      const gr = grid.getBoundingClientRect();
-      dragging.isCol = sp.dataset.k[1] === 'c';
-      dragging.grid0 = dragging.isCol ? gr.left : gr.top;
-      sp.classList.add('drag');
-      document.body.classList.add('resizing');
-    });
-  });
-
-  window.addEventListener('mousemove', e=>{
-    if(!dragging) return;
-    const grid2 = grid.getBoundingClientRect();
-    const cs = getComputedStyle(grid);
-    const k = dragging.key, lim = LAYOUT_LIMITS[k];
-    let v;
-    if(k === 'gc1')       v = e.clientX - grid2.left;
-    else if(k === 'gc3')  v = grid2.right - e.clientX;
-    else if(k === 'gr1')  v = e.clientY - grid2.top;
-    else {                /* gr2：要减掉第一行高和中间的 gap(10) */
-      v = e.clientY - grid2.top - parseFloat(cs.getPropertyValue('--gr1')) - 10;
+  // 网格与纵轴刻度：对比模式双轴（左温右湿），筛选模式只留当前属性一根轴
+  g.lineWidth=1; g.font='11px monospace';
+  for(let i=0;i<=4;i++){
+    const yy=pad.t+plotH*i/4, frac=1-i/4;
+    g.strokeStyle='rgba(120,200,170,.13)'; g.beginPath(); g.moveTo(pad.l,yy); g.lineTo(W-pad.r,yy); g.stroke();
+    if(single){
+      g.fillStyle=single.color; g.textAlign='right';
+      g.fillText(single.fmt(sLo+(sHi-sLo)*frac), pad.l-8, yy+4);
+    }else{
+      g.fillStyle='#ffb02e'; g.textAlign='right'; g.fillText((tLo+(tHi-tLo)*frac).toFixed(1),pad.l-8,yy+4);
+      g.fillStyle='#46c8d8'; g.textAlign='left'; g.fillText((hLo+(hHi-hLo)*frac).toFixed(1),W-pad.r+8,yy+4);
     }
-    v = Math.max(lim[0], Math.min(lim[1], v));
-    grid.style.setProperty('--' + k, v + 'px');
-    layoutSplitters();
-    relayoutZones();
-  });
-
-  window.addEventListener('mouseup', endDrag);
-  /* ★ 拖动中鼠标移出窗口 / 切走标签页时收不到 mouseup，
-     高亮和 dragging 状态会【卡住不消失】—— 这就是那条绿线一直挂着的可能原因。
-     补上 blur 和 visibilitychange 兜底。 */
-  window.addEventListener('blur', endDrag);
-  document.addEventListener('visibilitychange', ()=>{ if(document.hidden) endDrag(); });
-  /* 鼠标离开窗口时也把高亮清掉 */
-  document.addEventListener('mouseleave', ()=>{
-    if(!dragging) grid.querySelectorAll('.splitter.drag').forEach(s=>s.classList.remove('drag'));
-  });
-
-  /* ★ Ctrl+Alt+R 一键还原布局 */
-  document.addEventListener('keydown', e=>{
-    if(e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R')){
-      e.preventDefault();
-      resetLayout();
-    }
-  });
-  /* 标题栏那个"已自定义"提示也可以点 */
-  const lh = $('#layoutHint'); if(lh) lh.onclick = resetLayout;
-
-  loadLayout();
-  const reposition = ()=> layoutSplitters();
-  window.addEventListener('resize', reposition);
-  setTimeout(reposition, 60);
-  setTimeout(reposition, 400);
-})();
-
-/* ── 环境曲线：指标切换 / 放大 / 重绘 ───────────────────────────────── */
-function setMetric(m){
-  state.metric = m;
-  document.querySelectorAll('#metricSel .mb').forEach(b=>
-    b.classList.toggle('on', b.dataset.m === m));
-  renderZones(state.lastZones || {});
-  if($('#bigChart').classList.contains('open')) drawBigChart();
-}
-document.querySelectorAll('#metricSel .mb').forEach(b=>{
-  b.onclick = ()=>setMetric(b.dataset.m);
-});
-
-$('#btnZoneBig').onclick = ()=>{
-  $('#bigChart').classList.add('open');
-  drawBigChart();
-};
-$('#bigClose').onclick = ()=> $('#bigChart').classList.remove('open');
-$('#bigChart').onclick = e=>{ if(e.target.id === 'bigChart') $('#bigChart').classList.remove('open'); };
-
-/* 曲线面板尺寸变化后要重绘（canvas 的 backing store 不会自己跟着变） */
-function relayoutZones(){
-  /* ★ 这里【只重绘 canvas 和拖拽条位置】，绝不重建 DOM。
-     在 ResizeObserver 回调里改被观察元素的尺寸，会触发浏览器的
-     "ResizeObserver loop" 循环保护 —— 后续回调被节流甚至不再触发，
-     表现就是"窗口变了图不跟着变"。 */
-  redrawZones();
-  redrawTimeline();
-  layoutSplitters();
-  if($('#bigChart').classList.contains('open')) drawBigChart();
-}
-
-/* 窗口/面板尺寸变化 → 用 ResizeObserver 精确跟随，比监听 resize 事件准 */
-(function(){
-  let t = null;
-  const debounced = ()=>{ clearTimeout(t); t = setTimeout(relayoutZones, 80); };
-  window.addEventListener('resize', debounced);
-
-  if(window.ResizeObserver){
-    const ro = new ResizeObserver(debounced);
-    /* 观察每一张 zcard（而不是 zoneGrid）：卡片尺寸才是曲线的真实容器尺寸 */
-    const observeCards = ()=>{
-      const box = $('#zoneGrid'); if(!box) return;
-      box.querySelectorAll('.zcard').forEach(c=>ro.observe(c));
-    };
-    state.__observeZoneCards = observeCards;   /* renderZones 重建 DOM 后要重新挂 */
-
-    const bc = $('#bigChart'); if(bc) ro.observe(bc);
-    /* 时间线面板和曲线面板同样要观察 —— 拖动面板边框时它们的尺寸会变 */
-    const tl = document.querySelector('.panel.timeline'); if(tl) ro.observe(tl);
-    const zn = document.querySelector('.panel.zones');    if(zn) ro.observe(zn);
-    setTimeout(observeCards, 100);
-    setTimeout(observeCards, 600);
   }
-})();
+  g.strokeStyle='rgba(120,200,170,.3)';
+  g.beginPath(); g.moveTo(pad.l,pad.t); g.lineTo(pad.l,H-pad.b); g.lineTo(W-pad.r,H-pad.b); g.lineTo(W-pad.r,pad.t); g.stroke();
+  for(let i=0;i<=4;i++){
+    const idx=Math.round((ts.length-1)*i/4), xx=x(idx);
+    if(i>0 && idx===Math.round((ts.length-1)*(i-1)/4))continue;
+    g.strokeStyle='rgba(120,200,170,.16)'; g.beginPath(); g.moveTo(xx,pad.t); g.lineTo(xx,H-pad.b); g.stroke();
+    g.fillStyle='#91aaa1'; g.textAlign='center'; g.fillText(fmtDur(ts[idx]),xx,H-16);
+  }
+  g.fillStyle='#91aaa1'; g.textAlign='center'; g.fillText('采样时间',W/2,H-3);
+
+  // 筛选的这条属性在所选区间没有数据时，明确说出来，避免只剩一张空网格
+  if(single && !(d[single.key]||[]).some(Number.isFinite)){
+    g.fillStyle='#5f746d'; g.font='12px monospace'; g.textAlign='center';
+    g.fillText('该区间暂无'+single.short+'数据', W/2, pad.t+plotH/2);
+    return;
+  }
+
+  const plot=(arr,y,color)=>{
+    g.beginPath(); let drawing=false;
+    arr.forEach((value,i)=>{
+      if(value==null){drawing=false;return;}
+      if(!drawing){g.moveTo(x(i),y(value));drawing=true;}else g.lineTo(x(i),y(value));
+    });
+    g.strokeStyle=color; g.lineWidth=2; g.stroke();
+    const last=lastValue(arr); if(last!=null){
+      const i=arr.lastIndexOf(last); g.fillStyle=color; g.beginPath(); g.arc(x(i),y(last),3.5,0,Math.PI*2); g.fill();
+    }
+  };
+  if(single) plot(d[single.key]||[], yS, single.color);
+  else { plot(temp,yT,'#ffb02e'); plot(humi,yH,'#46c8d8'); }
+}
 
 /* ── 日志流 ─────────────────────────────────────────────────────────── */
 function logMatches(r){
@@ -1465,7 +1705,7 @@ function logLineHTML(r){
     <span class="t">${fmtTs(r.ts)}</span>
     <span class="lv">${r.level}</span>
     <span class="dm">${r.domain}</span>
-    <span class="tg" title="${r.tag}">${r.tag}</span>
+    <span class="tg" title="${escHtml(r.tag)}">${escHtml(r.tag)}</span>
     <span class="ms">${tail}</span>
   </div>`;
 }
@@ -1475,30 +1715,109 @@ function startPlayback(){
   if(state.timer) clearInterval(state.timer);
   state.timer = setInterval(()=>{
     const shown = stream.querySelectorAll('.logline').length;
-    let added = 0;
-    while(state.cursor < state.records.length && added < 3){
+    let added=0,examined=0;
+    while(!state.replayCleared && state.records.length && examined<state.records.length && added<3){
+      if(state.cursor>=state.records.length)state.cursor=0;examined++;
       const r = state.records[state.cursor++];
       if(logMatches(r)){ stream.insertAdjacentHTML('beforeend', logLineHTML(r)); added++; }
-      if(state.cursor > 4000) { state.cursor = 0; }
+
     }
     // 只保留最近 400 行，避免 DOM 膨胀
     while(stream.querySelectorAll('.logline').length > 400) stream.removeChild(stream.firstChild);
-    stream.scrollTop = stream.scrollHeight;
+    if(state.followLogs)stream.scrollTop=stream.scrollHeight;
     $('#streamCnt').textContent = state.cursor + ' / ' + state.records.length + ' 行';
   }, 130);
 }
+let layoutFrame=null;
 function relayout(){
-  /* 尺寸变化时【只重绘，不重新拉接口】—— 数据没变，拉一遍纯属浪费，
-     而且网络往返期间图表还是旧尺寸，看着就是"没跟上"。 */
-  redrawZones();
-  redrawTimeline();
+  if(layoutFrame!==null)return;
+  layoutFrame=requestAnimationFrame(()=>{
+    layoutFrame=null;renderTimeline(state.timeline);
+    Object.entries(state.lastZones).forEach(([z,d])=>drawZone(z,d));
+    if(state.envZone && state.lastZones[state.envZone])renderEnvDetail(state.envZone,state.lastZones[state.envZone]);
+  });
 }
 window.addEventListener('resize', relayout);
 
+/* ── 可拖拽三栏 ────────────────────────────────────────────────────────
+   只改变左右列的像素宽度；中列始终接收全部剩余空间，避免压缩日志流。
+   拖动结果保存在当前浏览器，刷新不会丢。 */
+const layout = { left:310, right:350, minSide:240, minCenter:460 };
+const layoutKey = 'agri-ops-layout-v1';
+function fitLayout(left=layout.left, right=layout.right){
+  const grid = $('#workspaceGrid');
+  if(!grid || window.innerWidth <= 1280) return;
+  const usable = grid.clientWidth - 24; // 两个 12px 分隔条
+  const maxSides = Math.max(layout.minSide * 2, usable - layout.minCenter);
+  let l = Math.max(layout.minSide, Math.round(left));
+  let r = Math.max(layout.minSide, Math.round(right));
+  if(l + r > maxSides){
+    const excess = l + r - maxSides;
+    if(l >= r) l = Math.max(layout.minSide, l - excess);
+    else r = Math.max(layout.minSide, r - excess);
+  }
+  layout.left=l; layout.right=r;
+  document.documentElement.style.setProperty('--left-col', l+'px');
+  document.documentElement.style.setProperty('--right-col', r+'px');
+}
+function saveLayout(){
+  try{localStorage.setItem(layoutKey,JSON.stringify({left:layout.left,right:layout.right}));}catch(e){}
+}
+function loadLayout(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(layoutKey) || '{}');
+    if(Number.isFinite(saved.left)) layout.left=saved.left;
+    if(Number.isFinite(saved.right)) layout.right=saved.right;
+  }catch(e){}
+  fitLayout();
+}
+function initSplitters(){
+  const grid = $('#workspaceGrid');
+  if(!grid) return;
+  const drag = (ev, side)=>{
+    if(window.innerWidth <= 1280) return;
+    ev.preventDefault();
+    const startX=ev.clientX, startLeft=layout.left, startRight=layout.right;
+    const handle=ev.currentTarget;
+    handle.classList.add('dragging'); document.body.classList.add('resizing');
+    const move = e=>{
+      const delta=e.clientX-startX;
+      if(side==='left') fitLayout(startLeft+delta,startRight);
+      else fitLayout(startLeft,startRight-delta);
+      relayout();
+    };
+    const end = ()=>{
+      handle.classList.remove('dragging'); document.body.classList.remove('resizing');
+      window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',end);
+      saveLayout(); relayout();
+    };
+    window.addEventListener('pointermove',move); window.addEventListener('pointerup',end,{once:true});
+  };
+  document.querySelectorAll('[data-split]').forEach(handle=>{
+    handle.addEventListener('pointerdown',e=>drag(e,handle.dataset.split));
+    handle.addEventListener('keydown',e=>{
+      const step=e.shiftKey?40:16;
+      if(e.key!=='ArrowLeft' && e.key!=='ArrowRight') return;
+      e.preventDefault();
+      const delta=e.key==='ArrowLeft'?-step:step;
+      if(handle.dataset.split==='left') fitLayout(layout.left+delta,layout.right);
+      else fitLayout(layout.left,layout.right-delta);
+      saveLayout(); relayout();
+    });
+  });
+  $('#layoutReset').onclick=()=>{
+    layout.left=310; layout.right=350; fitLayout(); saveLayout(); relayout();
+  };
+  const observer=new ResizeObserver(()=>{fitLayout();relayout();});
+  observer.observe(grid);observer.observe($('#zoneGrid').parentElement);
+  loadLayout();
+}
+initSplitters();
+
 /* ── 过滤器交互 ─────────────────────────────────────────────────────── */
-/* 过滤器变化 / 清屏：两种模式都要从头发一遍，否则实时模式只剩新行 */
+/* 筛选时重新读取历史；清空按钮单独保留增量游标。 */
 function resetStream(){
-  state.cursor = 0;
+  state.streamVersion++;state.cursor = 0;state.replayCleared=false;
   if(state.mode === 'live') state.liveCursor = 0;
   $('#stream').innerHTML = '';
 }
@@ -1517,7 +1836,20 @@ $('#fQ').oninput = e=>{
   clearTimeout(qT);
   qT = setTimeout(()=>{ state.filter.q = e.target.value.trim(); resetStream(); }, 300);
 };
-$('#btnClr').onclick = resetStream;
+$('#btnClr').onclick=()=>{
+  state.streamVersion++;$('#stream').innerHTML='';
+  if(state.mode!=='live'){state.cursor=state.records.length;state.replayCleared=true;}
+};
+function setLogFollow(on){
+  state.followLogs=on;$('#btnFollow').classList.toggle('on',on);$('#btnFollow').setAttribute('aria-pressed',String(on));
+  $('#btnFollow').textContent=on?'跟随最新':'已暂停跟随';
+  if(on)$('#stream').scrollTop=$('#stream').scrollHeight;
+}
+$('#btnFollow').onclick=()=>setLogFollow(!state.followLogs);
+$('#stream').addEventListener('scroll',()=>{
+  const el=$('#stream'),nearBottom=el.scrollHeight-el.scrollTop-el.clientHeight<32;
+  if(state.followLogs && !nearBottom)setLogFollow(false);
+});
 
 /* 设备端模式：读 /api/meta 的 device_mode（来自固件 AgriMode 日志） */
 function renderDeviceMode(dm){
@@ -1549,43 +1881,15 @@ function fmtAge(s){
 }
 
 /* ── 报告 ───────────────────────────────────────────────────────────── */
-/* 报告来源范围：默认【只看真机】。
-   模拟数据集算出来的报告和真机报告摆在一起，演示时极容易被误认为都是真的。
-   默认过滤掉，需要对比时再手动切到"显示全部"。 */
-function repFilter(){
-  return state.repSrc || 'live';
-}
-function applyRepFilter(list){
-  return repFilter() === 'live'
-    ? list.filter(r=>r.source_kind === 'live')
-    : list;
-}
 async function renderReports(rawList){
   const box = $('#repList');
   const all = rawList || await api('/api/reports');
   state.repAll = all;
-  const list = applyRepFilter(all);
-  const liveN = all.filter(r=>r.source_kind==='live').length;
-  const simN = all.length - liveN;
-
-  const b = $('#btnRepSrc');
-  const onlyLive = repFilter() === 'live';
-  b.className = 'btn src' + (onlyLive ? '' : ' all');
-  b.textContent = onlyLive ? ('只看真机' + (liveN ? ' ' + liveN : ''))
-                           : ('含模拟 ' + simN);
-
-  $('#repCnt').textContent = list.length + ' 份'
-    + (onlyLive && simN ? '（已隐藏 ' + simN + ' 份模拟数据集报告）' : '');
+  const list = all.filter(r=>r.source_kind==='live');
+  $('#repCnt').textContent = list.length + ' 份';
 
   if(!list.length){
-    box.innerHTML = onlyLive
-      ? '<div class="empty">还没有【真机】报告<br><br>'
-        + '板子接好后点右上角<b style="color:var(--cyan)">「生成根因报告」</b><br>'
-        + '<span style="color:var(--ink-faint)">（当前已隐藏 '
-        + simN + ' 份模拟数据集报告）</span></div>'
-      : '<div class="empty">还没有生成报告<br><br>运行：<br>'
-        + '<code style="color:var(--phosphor);font-size:10px">'
-        + '.\\run.ps1 tools/analyze_demo.py --input &lt;log&gt;</code></div>';
+    box.innerHTML = '<div class="empty">暂无设备报告<br><br>连接设备并接收到日志后，点击「生成根因报告」。</div>';
     return;
   }
   box.innerHTML = list.map(r=>`
@@ -1608,43 +1912,104 @@ async function renderReports(rawList){
     };
   });
 }
-$('#btnRepSrc').onclick = ()=>{
-  state.repSrc = (repFilter() === 'live') ? 'all' : 'live';
-  renderReports(state.repAll);
-};
 
 /* ── 对当前实时数据生成根因报告 ─────────────────────────────────────── */
 function setAnState(kind, text){
   const b = $('#btnAnalyze');
-  b.className = 'btn' + (kind ? ' ' + kind : '');
+  b.className = 'btn an' + (kind ? ' ' + kind : '');
   b.textContent = text;
   b.disabled = (kind === 'busy');
 }
-async function runAnalyze(){
-  const scope = state.zone ? (state.zone + ' 棚') : '全部设备';
-  setAnState('busy', '分析中…');
-  const r = await api(ZQ('/api/analyze?max=2'));
-  if(!r.started){ setAnState('', '生成根因报告'); alert(r.reason || '未能启动'); return; }
-  const t0 = Date.now();
-  const timer = setInterval(async ()=>{
-    let st;
-    try{ st = await api('/api/analyze?action=status'); }catch(e){ return; }
-    const sec = Math.round((Date.now()-t0)/1000);
-    if(st.running){
-      setAnState('busy', '分析中 ' + sec + 's（' + (st.log && st.log.length ? st.log[st.log.length-1].slice(9) : '') + '）');
-      return;
-    }
-    clearInterval(timer);
-    if(st.error){ setAnState('', '生成根因报告'); alert('分析失败：' + st.error); return; }
-    setAnState('', '生成根因报告');
-    /* 分析完立刻刷新报告列表，新报告出现在最前面 */
-    renderReports(await api('/api/reports'));
-    $('#repList').insertAdjacentHTML('afterbegin',
-      `<div class="anNote">刚对【${escHtml(scope)}】的实时真机数据生成 ${st.reports.length} 份报告`
-      + `（窗口 ${st.windows} 个 / 异常 ${st.anomalies} 个，${st.elapsed_s}s）</div>`);
-  }, 1500);
+function showReportDialog(message, hint=''){
+  $('#reportDialogMessage').textContent=message;
+  $('#reportDialogHint').textContent=hint;
+  $('#reportDialogFiles').replaceChildren();
+  $('#reportDialog').classList.add('open');
+  $('#reportDialog').setAttribute('aria-hidden','false');
 }
+function closeReportDialog(){
+  $('#reportDialog').classList.remove('open');
+  $('#reportDialog').setAttribute('aria-hidden','true');
+}
+async function saveGeneratedReport(name, button){
+  button.disabled=true;
+  try{
+    // 保存对话框必须直接由用户点击触发，不能先等待网络请求。
+    let handle=null;
+    if(window.showSaveFilePicker){
+      handle=await window.showSaveFilePicker({suggestedName:name,types:[{description:'Markdown 报告',accept:{'text/markdown':['.md']}}]});
+    }
+    const report=await api('/api/report?name='+encodeURIComponent(name));
+    if(!report.markdown)throw new Error(report.error||'报告内容为空');
+    if(handle){
+      const writable=await handle.createWritable();
+      await writable.write(report.markdown);
+      await writable.close();
+      $('#reportDialogHint').textContent='保存成功：'+name;
+    }else{
+      const url=URL.createObjectURL(new Blob([report.markdown],{type:'text/markdown;charset=utf-8'}));
+      const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      $('#reportDialogHint').textContent='已发起下载；保存位置由浏览器下载设置决定。';
+    }
+  }catch(e){
+    if(e.name==='AbortError')$('#reportDialogHint').textContent='已取消保存，可再次点击保存。';
+    else $('#reportDialogHint').textContent='保存失败：'+e.message+'。请重试。';
+  }finally{button.disabled=false;}
+}
+function showGeneratedReports(names, scope){
+  showReportDialog('生成成功：已为【'+scope+'】生成 '+names.length+' 份报告。',
+    '报告已保存在项目中。点击“另存为”可选择电脑上的位置；如浏览器不支持选择位置，将使用浏览器下载设置。');
+  const files=$('#reportDialogFiles');
+  names.forEach(name=>{
+    const row=document.createElement('div');row.className='report-file';
+    const label=document.createElement('span');label.textContent=name;
+    const button=document.createElement('button');button.type='button';button.className='btn';button.textContent='另存为';
+    button.onclick=()=>saveGeneratedReport(name,button);
+    row.append(label,button);files.appendChild(row);
+  });
+}
+async function runAnalyze(){
+  if(state.analyzeBusy){showReportDialog('报告正在生成，请稍候。','关闭窗口不会中断后台分析。');return;}
+  if(state.mode!=='live' || state.isSim){
+    showReportDialog('无法生成设备报告','请先连接设备，以实时模式启动项目并接收到设备日志后重试。当前回放或模拟数据不能用于生成设备报告。');
+    return;
+  }
+  state.analyzeBusy=true;
+  const scope=state.zone?(state.zone+' 棚'):'全部设备';setAnState('busy','分析中…');
+  showReportDialog('正在分析【'+scope+'】的设备日志…','关闭窗口不会中断后台分析。');
+  try{
+    const useLLM=$('#aiAnalyzeToggle')?.checked!==false;
+    state.useLLM=useLLM;
+    const r=await api(ZQ('/api/analyze?max=2'+(useLLM?'':'&no_llm=1')));
+    if(!r.started)throw new Error(r.reason||'未能启动');
+    const started=Date.now();let failures=0;
+    while(true){
+      await new Promise(resolve=>setTimeout(resolve,1500));
+      if(Date.now()-started>180000)throw new Error('等待结果超时，后台任务可能仍在运行，请稍后查看报告列表。');
+      let st;
+      try{st=await api('/api/analyze?action=status');failures=0;}
+      catch(e){if(++failures>=3)throw new Error('与分析服务的连接中断，请恢复连接后查看报告列表。');continue;}
+      if(st.running){
+        const seconds=Math.round((Date.now()-started)/1000);
+        setAnState('busy',(useLLM?'AI分析中 ':'规则分析中 ')+seconds+'s');
+        $('#reportDialogMessage').textContent='正在分析【'+scope+'】的设备日志… 已用时 '+seconds+' 秒';
+        continue;
+      }
+      if(st.error)throw new Error(st.error);
+      const names=Array.isArray(st.reports)?st.reports.filter(Boolean):[];
+      if(!names.length)throw new Error('分析已结束，但没有生成报告。请检查设备日志和后台分析记录。');
+      try{await renderReports(await api('/api/reports'));}catch(e){/* 不影响已生成报告的保存 */}
+      showGeneratedReports(names,scope);break;
+    }
+  }catch(e){showReportDialog('报告生成未完成',e.message);}
+  finally{state.analyzeBusy=false;setAnState('','生成根因报告');}
+}
+$('#reportDialogClose').onclick=closeReportDialog;
+$('#reportDialog').onclick=e=>{if(e.target.id==='reportDialog')closeReportDialog();};
 $('#btnAnalyze').onclick = runAnalyze;
+$('#aiAnalyzeToggle').onchange = updateAIHint;
+updateAIHint();
 
 /* ── 强制重连 ───────────────────────────────────────────────────────
    为什么需要这个按钮：采集子进程自带断线重连，但它是**钉在一个端口号**上重试的。
@@ -1660,65 +2025,95 @@ function setRcState(kind, text){
 }
 let rcBusy = false;
 async function forceReconnect(auto){
-  if(rcBusy) return;
-  rcBusy = true;
-  setRcState('busy', auto ? '自动重连中…' : '重连中…');
-  try{
-    const r = await api('/api/live/reconnect');
-    if(!r.ok){ setRcState('', '重新连接'); if(!auto) alert(r.reason || '重连失败'); }
-    else{
-      /* 重连成功不代表马上有数据，等下一次 poll 拿到 online 再恢复外观 */
-      setTimeout(()=>{ if(rcBusy){ rcBusy = false; setRcState('need','重新连接'); } }, 6000);
-    }
-  }catch(e){ rcBusy = false; setRcState('', '重新连接'); }
+  if(rcBusy)return;rcBusy=true;setRcState('busy',auto?'自动重连中…':'重连中…');
+  try{const r=await api('/api/live/reconnect');if(!r.ok)throw new Error(r.reason||'重连失败');await refreshPanels();}
+  catch(e){panelStatus('重新连接失败：'+e.message);}
+  finally{rcBusy=false;setRcState('','重新连接');}
 }
 $('#btnReconnect').onclick = ()=>forceReconnect(false);
+$('#soundToggle').onclick = ()=>setSoundEnabled(!state.soundEnabled);
+$('#alertStatus').onclick = openAlertCenter;
 
 /* ── 设备选择：切换后整块看板换视角 ─────────────────────────────────── */
 async function applyZone(zone){
-  state.zone = zone || '';
-  const box = $('#devSel').parentElement;
-  if(box) box.classList.toggle('on', !!state.zone);
-  resetStream();                       /* 日志流从头发一遍（只显示该设备） */
-
-  if(state.mode === 'live'){
-    /* 实时模式：拉一次面板数据立刻刷新，不用等 3 秒轮询 */
-    try{
-      const [meta, summary, tl, zones, fams] = await Promise.all([
-        api(ZQ('/api/meta')), api(ZQ('/api/summary')), api(ZQ('/api/timeline')),
-        api(ZQ('/api/zones')), api(ZQ('/api/families'))
-      ]);
-      renderDeviceMode(meta.device_mode);
-      $('#kLines').textContent = meta.records.toLocaleString();
-      $('#kDur').textContent = fmtDur(meta.duration_s);
-      $('#kAnom').textContent = meta.anomaly_windows + ' / ' + meta.windows;
-      renderFaults(summary); renderFamilies(fams);
-      renderTimeline(tl); renderZones(zones);
-    }catch(e){}
-  }else{
-    /* 回放模式：重新预载该设备的日志 */
-    try{
-      const first = await api(ZQ('/api/logs?limit=2000'));
-      state.records = first.items; state.cursor = 0;
-      const [summary, tl, zones, fams] = await Promise.all([
-        api(ZQ('/api/summary')), api(ZQ('/api/timeline')),
-        api(ZQ('/api/zones')), api(ZQ('/api/families'))
-      ]);
-      renderFaults(summary); renderFamilies(fams);
-      renderTimeline(tl); renderZones(zones);
-    }catch(e){}
+  state.zone=zone||'';state.panelVersion++;
+  $('#devSel').parentElement.classList.toggle('on',!!state.zone);
+  closeEnvDetail();closeTimelineDetail();resetStream();
+  state.lastZones={};state.timeline=[];relayout();
+  if(state.mode!=='live'){
+    const selected=state.zone;
+    try{const first=await api(ZQ('/api/logs?limit=2000'));if(selected===state.zone)state.records=first.items;}
+    catch(e){panelStatus('设备日志加载失败，请重试。');}
   }
+  await refreshPanels();
 }
 $('#devSel').onchange = e=>applyZone(e.target.value);
 
+$('#tlFollow').onchange=e=>{state.timelineFollow=e.target.checked;renderTimelineDetail();};
+$('#envFollow').onchange=e=>{state.envFollow=e.target.checked;if(state.envData)renderEnvDetail(state.envZone,state.envData);};
+/* 点击「区间末温度/湿度/光照」卡片：只看该曲线；同一张再点一次恢复对比 */
+document.querySelectorAll('#envModal .env-stat').forEach(el=>{
+  el.addEventListener('click', ()=>setEnvMetric(el.dataset.metric));
+});
 $('#readerClose').onclick = ()=> $('#reader').classList.remove('open');
+$('#envClose').onclick = closeEnvDetail;
+$('#timelineClose').onclick = closeTimelineDetail;
+$('#timelinePanel').onclick = openTimelineDetail;
+$('#timelinePanel').onkeydown = e=>{
+  if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openTimelineDetail(); }
+};
+$('#tlRangeStart').oninput = e=>{
+  state.timelineFollow=false;$('#tlFollow').checked=false;
+  state.timelineStart=Number(e.target.value);
+  if(state.timelineStart>state.timelineEnd) state.timelineEnd=state.timelineStart;
+  state.timelineHover=-1; $('#tlTooltip').style.display='none'; renderTimelineDetail();
+};
+$('#tlRangeEnd').oninput = e=>{
+  state.timelineFollow=false;$('#tlFollow').checked=false;
+  state.timelineEnd=Number(e.target.value);
+  if(state.timelineEnd<state.timelineStart) state.timelineStart=state.timelineEnd;
+  state.timelineHover=-1; $('#tlTooltip').style.display='none'; renderTimelineDetail();
+};
+$('#envRangeStart').oninput = e=>{
+  state.envFollow=false;$('#envFollow').checked=false;
+  state.envStart=Number(e.target.value);
+  if(state.envStart>state.envEnd) state.envEnd=state.envStart;
+  const selected=selectedEnvData();
+  if(selected){ updateEnvSummary(selected); renderEnvChart(selected); }
+};
+$('#envRangeEnd').oninput = e=>{
+  state.envFollow=false;$('#envFollow').checked=false;
+  state.envEnd=Number(e.target.value);
+  if(state.envEnd<state.envStart) state.envStart=state.envEnd;
+  const selected=selectedEnvData();
+  if(selected){ updateEnvSummary(selected); renderEnvChart(selected); }
+};
+$('#timelineDetailCanvas').addEventListener('pointermove',e=>{
+  const tl=selectedTimeline(), cv=e.currentTarget, shell=cv.parentElement;
+  if(!tl.length) return;
+  const padL=58, plotW=cv.clientWidth-78;
+  const index=Math.max(0,Math.min(tl.length-1,Math.round((e.offsetX-padL)/plotW*(tl.length-1))));
+  if(state.timelineHover!==index){ state.timelineHover=index; renderTimelineDetail(); }
+  const d=tl[index], total=(d.I||0)+(d.W||0)+(d.E||0), tip=$('#tlTooltip');
+  tip.innerHTML='时间 '+fmtDur(d.t)+'<br>INFO '+(d.I||0)+'　WARN '+(d.W||0)+'　ERROR '+(d.E||0)+'<br>合计 '+total+' 行';
+  tip.style.left=Math.max(8,Math.min(shell.clientWidth-175,e.offsetX+12))+'px';
+  tip.style.top=Math.max(8,Math.min(shell.clientHeight-64,e.offsetY+12))+'px';
+  tip.style.display='block';
+});
+$('#timelineDetailCanvas').addEventListener('pointerleave',()=>{
+  state.timelineHover=-1; $('#tlTooltip').style.display='none'; renderTimelineDetail();
+});
 document.addEventListener('keydown', e=>{
-  if(e.key !== 'Escape') return;
-  /* 放大浮层在最上层，ESC 先关它 */
-  if($('#bigChart').classList.contains('open')){ $('#bigChart').classList.remove('open'); return; }
+  if(e.key!=='Escape') return;
   $('#reader').classList.remove('open');
+  closeEnvDetail();
+  closeTimelineDetail();
 });
 $('#reader').onclick = e=>{ if(e.target.id==='reader') $('#reader').classList.remove('open'); };
+$('#envModal').onclick = e=>{ if(e.target.id==='envModal') closeEnvDetail(); };
+$('#timelineModal').onclick = e=>{ if(e.target.id==='timelineModal') closeTimelineDetail(); };
+$('#alertClose').onclick = closeAlertCenter;
+$('#alertModal').onclick = e=>{ if(e.target.id==='alertModal') closeAlertCenter(); };
 </script>
 </body>
 </html>
