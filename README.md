@@ -478,7 +478,10 @@ powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
 
 > `run.ps1`、启动器、看板服务启动时都会自动加载 `.env`。启动横幅会打印 `🤖 LLM 可用（deepseek-flash）` 或 `不可用 → 规则引擎降级`；没有 Key 不影响采集/解析/看板。
 
-### 7.2 `.env`：告警
+### 7.2 `.env`：告警（邮件默认清空，需要时自己填）
+
+> ⚠️ **邮件通道默认关闭，配置项留空。** 请填成你自己的配置后再把 `ALERT_EMAIL_ENABLED` 改成 `1`；
+> 真实邮箱地址/授权码只留在本机 `.env`，**不要写进 README、代码，也不要提交到 Git**。
 
 ```ini
 # 总开关与策略
@@ -488,22 +491,34 @@ ALERT_DRY_RUN=0            # 1 = 演练，不真发
 ALERT_COOLDOWN_S=180
 ALERT_MAX_PER_HOUR=12
 
-# 邮件（QQ 邮箱示例）
-ALERT_EMAIL_ENABLED=1
-SMTP_HOST=smtp.qq.com
+# 邮件（默认清空 = 不启用；请在这里填写你自己的 SMTP 配置）
+ALERT_EMAIL_ENABLED=0
+SMTP_HOST=
 SMTP_PORT=465
 SMTP_SECURITY=ssl
-SMTP_USER=你的QQ号@qq.com
-SMTP_PASSWORD=QQ邮箱授权码        # 不是登录密码！
-ALERT_EMAIL_FROM=你的QQ号@qq.com
-ALERT_EMAIL_TO=收件人@example.com,另一个人@example.com
+SMTP_USER=
+SMTP_PASSWORD=
+ALERT_EMAIL_FROM=
+ALERT_EMAIL_TO=
 
 # Webhook（钉钉/飞书/企业微信/自建）
-ALERT_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=xxxx
+ALERT_WEBHOOK_URL=
 # ALERT_WEBHOOK_KIND=auto    # auto | dingtalk | feishu | wecom | generic
 ```
 
-- **QQ 邮箱授权码**：QQ 邮箱 → 设置 → 账号 → 开启 IMAP/SMTP 服务 → 发短信 → 得到 16 位授权码。
+**填写提醒（邮件）**：
+
+| 配置项 | 填什么 |
+|---|---|
+| `SMTP_HOST` | QQ 邮箱填 `smtp.qq.com`，163 填 `smtp.163.com` |
+| `SMTP_PORT` / `SMTP_SECURITY` | QQ/163 一般 `465` + `ssl` |
+| `SMTP_USER` | 你的完整邮箱地址 |
+| `SMTP_PASSWORD` | 邮箱**授权码**（不是登录密码；QQ 邮箱在设置→账号里开启 IMAP/SMTP 后生成 16 位授权码） |
+| `ALERT_EMAIL_FROM` | 一般与 `SMTP_USER` 相同 |
+| `ALERT_EMAIL_TO` | 收件人；多个用逗号分隔 |
+| `ALERT_EMAIL_ENABLED` | 填完改为 `1` |
+
+- 填好后保存，在告警中心点「测试邮箱通道」验证；不需要等真实故障。
 - 邮件失败会自动退避 120 秒；手动点「测试邮箱通道」会强制重试，不被退避挡住。
 - Webhook 按 URL 自动识别钉钉/飞书/企业微信的负载格式，并检查 HTTP 200 里的 `errcode/code`；**暂不支持钉钉/飞书的"加签"**，请用自定义关键词或 IP 白名单。
 - 配置完可在看板告警中心点「测试邮箱通道 / 测试Webhook」验证，不必等故障。
