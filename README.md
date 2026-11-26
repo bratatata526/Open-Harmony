@@ -1,593 +1,634 @@
-﻿# OpenHarmony 系统日志异常智能聚合分析工具 
+# OpenHarmony 日志智能聚合分析工具
 
-> 适用课题：OpenHarmony 系统日志异常智能聚合分析工具
-> 硬件：华清远见 FS-Hi3861 鸿蒙开发板 ×1 —— **一块板 = 一个传感器节点**，板载 SHT20 出温度/湿度、板载 AP3216C 出光照
-> 分组：**3 人团队**（1 块 Hi3861 = 6 个逻辑设备 Zone-A ~ Zone-F）
+> 一块 Hi3861 开发板 + 一条 USB 线，把板载温湿度/光照日志变成可查询、可聚合、可出根因报告、可邮件/Webhook 告警的 Web 看板。
+>
+> **本文是环境配置与使用说明。** 环境搭建步骤参考《OpenHarmony 开发板实验指导书 Windows 版 V2.1.15》第 1 章「开发环境搭建」，并结合本仓库的实际目录、脚本与固件实现做了项目化整理；日志规范、算法、接口与前端细节见 [`docs/`](docs/)。
+>
+> 仓库：<https://github.com/bratatata526/Open-Harmony>
 
 ---
 
-## 0. 先读这一页：本方案的核心判断
+## 1. 项目概览
 
-### 0.1 技术路线：单节点方案（一块 Hi3861 就是一个传感器节点）
+### 1.1 数据链路
 
-**一块 FS-Hi3861 开发板 = 一个传感器节点。** 这一个节点提供且只提供三项读数：**温度 temp、湿度 humi、光照 light**——板载 **SHT20** 出温湿度，板载 **AP3216C** 出光照 ALS，同一块板、同一次读数采样。团队只有 3 人，而这一块板子已完整覆盖题目 (1) 的全部要求：
-
-| 题目要求 | 单节点如何满足 |
-|---|---|
-| 多任务模拟程序 | CMSIS-RTOS2 起 6 个 zone 上报任务 + 采集/自检/故障注入任务 |
-| 连续、周期性日志 | 每 5 秒一轮，6 个 zone 交错输出，天然形成"多设备日志流" |
-| 真实环境数据 | 板载 **SHT20**（真实温度/湿度）+ 板载 **AP3216C**（真实光照 ALS）——三项读数全部来自真实物理世界，**全靠板载元件，不用另行采购或接线** |
-| 规范化日志 | 自建 `log_def.h` 宏输出 hilog 同构格式（`docs/02` 冻结规范） |
-| 异常场景 | 软件故障注入器（**13 组场景、28 个故障码全覆盖** + 日志静默 / 丢包 / 乱序 / 截断 / 乱码）+ **真实物理触发**（遮住 AP3216C、对着 SHT20 哈气、按键） |
-
-**为什么一个节点就够**：
-
-| 维度 | 说明 |
-|---|---|
-| **题目对应** | 题目考的是"日志聚合与智能分析"，不是"能接几个传感器"。**单节点方案完整覆盖全部 4 项核心任务** |
-| **数据真实性** | 温湿度、光照都是板载传感器真读出来的；6 个 zone 的差异由软件按"园区共享同一片天气"的模型派生，**基准值只有一个真实来源** |
-| **风险** | 不需要额外模块与接线、不需要电平匹配、不存在多套时间轴对不齐的问题 |
-| **答辩更聚焦** | 讲清"规则-统计-LLM 三层识别框架"比讲"我怎么把传感器接起来"有价值得多 |
-
-| 组成 | 在本项目中的角色 |
-|---|---|
-| **Hi3861（华清远见 FS-Hi3861）** | **唯一设备端**：跑多任务模拟程序、输出 hilog 规范日志、采集板载 SHT20/AP3216C 的真实读数、注入故障、经 WiFi/MQTT 上云 |
-| **PC（Python）** | **全部软件工作量**：串口采集 → 解析 → 过滤 → 模板挖掘 → 异常识别 → LLM 根因分析 → 告警报告 → 可视化 |
-
-一句话结论：**Hi3861 负责"产生规范日志"，PC 上的 Python 工具负责"把日志变成可运维结论"。工作量的重心在 PC 侧，那里才是评分的主战场。**
-
-### 0.2 只有 1 块 Hi3861，怎么满足"设备数量 6 个"
-
-不要把"6 个设备"理解成 6 块物理板子或 6 个物理传感器——那是误读。真实情况是：**物理上只有一个节点（一块板、三项读数），6 个逻辑 zone 是同一份真实读数经软件派生出来的 6 个逻辑设备**（园区内不同大棚共享同一片天空、同一时段天气），采用 **"1 块板子 = 6 个逻辑设备"** 的映射：
-
-```
-1 块 Hi3861 固件内部启动 6 个逻辑设备任务（Zone-A ... Zone-F）
-        │  每个 Zone 有独立 seq、独立采样周期、独立故障场景、独立 tag
+```text
+板载 SHT20（温度/湿度） + AP3216C（光照）
+        │
         ▼
-1 路串口（+ 1 路 MQTT 备份），输出带 zone 标识的多设备日志流
+firmware/hi3861/agri_logger/  ── 按《日志规范》输出单行日志（ASCII，≤128 字节）
+        │  USB Type-C / CH340 / 115200
         ▼
-3 人各负责一层：设备端固件 / 采集解析聚合 / 识别分析与报告
+tools/serial_capture.py 或 dashboard 实时读串口
+        │
+        ▼
+agri_logger/parser → fields → windows（60s 窗口、5 信号加权打分）
+        │
+        ├─→ 异常族聚类 / 证据校验
+        ├─→ 规则引擎（无 API Key 时）或 DeepSeek LLM（有 Key 时）
+        ├─→ Markdown 根因报告（reports_live / reports_llm）
+        └─→ 告警：控制台 / logs/alerts.jsonl / Webhook / 邮件
+        │
+        ▼
+web/index.html（原生 JS，零构建、离线可用） → http://127.0.0.1:8080
 ```
 
-- **一致性铁律**：日志模拟器（`tools/openharmony_log_sim.py`）产出的日志必须与真机**字节级同构**（同一套正则就能解析）。验收时用"同一份 Python 解析器同时吃真机串口流和模拟器流，解析成功率均 ≥ 99%"来证明等价性。
-- **单设备模式是"零偏置"的对照**：固件里 `SINGLE_DEVICE_MODE 1` + `ZONE_COUNT=1` 时只上报 **Zone-A**，读数就是板载传感器的**原始真实读数**，不加任何偏置、不派生、不掺噪声。6 棚模式（`SINGLE_DEVICE_MODE 0`）才在同一个基准读数上做派生。现场演示时先跑单设备模式，证明"数据确实来自传感器"，再切 6 棚模式演示多设备聚合。
-- **模拟器的双重价值**：① 让 2 人在真机就绪前就能开发 Python 侧；② 产出**带 ground-truth 标注**的评测集，使"识别准确率"可量化。**这两点单靠真机做不到。**
+### 1.2 已经实现的功能
 
-### 0.3 关于"真实环境数据"——一个节点就把三项读数给全了
+- **设备端**：单设备模式 / 六棚逻辑设备模式；板载 KEY 运行时开关故障注入；OLED 显示当前模式；开机横幅 + 数值转换自检。
+- **看板**：KPI、故障码分布、异常族聚合、日志密度时间线、实时日志流、大棚环境、根因报告、告警中心。
+- **分析**：60 秒窗口 + 级别/故障码/静默/seq 缺口/阈值 5 信号打分；异常族聚类；证据逐条回查；LLM 与规则引擎双路。
+- **报告**：Markdown 根因报告，自动标注数据来源与引擎；真机报告与模拟器报告分目录保存。
+- **告警**：控制台、JSONL 审计、钉钉/飞书/企业微信 Webhook、SMTP 邮件；去重/冷却/限流/分级；支持演练模式。
+- **交互**：设备聚焦、日志级别/模块/正则过滤、时间范围缩放、环境曲线点击筛选、报告阅读器、声音提示、布局复位。
 
-**硬件真相**：
+### 1.3 三种运行形态
 
-| 硬件 | 能提供的真实物理量 | 状态 |
-|---|---|---|
-| FS-Hi3861 **板载 SHT20 空气温湿度传感器** | 真实温度 + 真实湿度 | ✅ 板载，SDK 自带驱动 `base_06_i2c_sht20` |
-| FS-Hi3861 **板载 AP3216C** | **真实光照（ALS）** + 接近 + 红外 | ✅ 板载，SDK 自带驱动 `base_07_i2c_ap3216c` |
+| 形态 | 数据来源 | 启动方式 | 能否生成设备报告 |
+|---|---|---|---|
+| **回放 replay** | `eval/dataset/d2_v2.log`（30 分钟、148 次故障注入、带标注）或 `--log` 指定 | `run.ps1 tools/dashboard_server.py --port 8080` | 不能（界面会提示） |
+| **实时真机 live** | 开发板串口（`--live`，默认自动发现 COM） | 启动器 / `start_dashboard.cmd` / `--live` | **能** |
+| **实时模拟器 live-sim** | `tools/openharmony_log_sim.py` 模拟日志 | `--live-sim` | 不能（模拟数据） |
 
-**一个节点 = 三项读数**：`temp` 与 `humi` 来自 SHT20，`light` 来自 AP3216C，**同一次读数采样**写进同一条日志。这就是本项目**全部**的真实数据来源——不用采购传感器，也不用额外接任何模块。
+> 回放和模拟器用于算法演示与前端开发；**要生成"设备报告"必须接真机并处于 live 模式**，这样报告里的数据来源才能标注为真机串口。
 
-**6 个 zone 的读数怎么来的**：一块板采到的是一组真实读数。6 个逻辑大棚在园区里共享同一片天空、同一时段天气，所以固件在**同一个基准读数**上做软件派生（固定物理偏置 + 热惯性 + 少量噪声），得到 Zone-A~F 的差异值。**派生的是"差异"，不是"数据本身"**——基准值永远是传感器读数。要证明这一点很简单：把固件切到单设备模式（`SINGLE_DEVICE_MODE 1`，`ZONE_COUNT=1`，只有 Zone-A），读数就是原始真实读数，**不加任何偏置**。
+### 1.4 关于"一块板 = 6 个设备"
 
-**现场可验证**：用手遮住 AP3216C，光照值立刻掉下来并触发 WARN；对着 SHT20 哈气，湿度立刻上升。**这比软件注入的假故障有说服力得多，而且答辩现场可以当着评委做。**
+物理上只有 **1 个传感器节点**（板载 SHT20 + AP3216C）。`agri_logger_multi.c` 里的六棚模式是把同一份真实读数派生成 6 个逻辑大棚（固定偏置 + 热惯性），**基准值仍是真实传感器读数**；单设备模式（默认）则直接上报真实读数。两种模式的切换见 §7.3。
 
-**若传感器驱动一时跑不通**，降级方案是把 `sensor_hub` 的读数换成常量基准值，并在日志与报告里标注数据来源为仿真值：先让"采集 → 解析 → 识别 → 报告"整条链路跑通，**不要让传感器卡住整个项目的进度**。切换只改读数来源一处，不动日志格式，下游模块完全无感。
+---
 
-### 0.4 又一个好消息：SDK、工具链、示例代码已经全在工作区里了
+## 2. 环境要求
 
-`E:\Code\Harmony` 里已经备齐了一整套开发环境，**"环境搭建"这个最大的风险点基本消失**：
-
-| 路径 | 内容 |
+| 类别 | 要求 |
 |---|---|
-| `hi3861_application/` | HiSpark Hi3861 SDK（含 `vendor/hqyj/fs_hi3861` 华清远见板级适配） |
-| `harmony_sdk/` | 同源 SDK 副本（另含 `doc/物联网技术及应用实验指导手册.md`，9000 行） |
-| `Tool/DevTools_Hi3861V100_v1.0/` | RISC-V 交叉编译工具链（`riscv32-unknown-elf-gcc`） |
-| `Tool/HiBurn.exe` | Hi3861 烧录工具 |
-| `Tool/CH340/` | USB 转串口驱动 |
-| `Tool/mosquitto-1.6.9-install-windows-x64.exe` | MQTT Broker（本机即可搭） |
-| `Tool/paho.mqtt.embedded-c-master.zip` | 嵌入式 MQTT C 客户端库 |
-| `Tool/MDK5/`、`Tool/ST-Link/`、`Tool/en.stm32cubemx_v5-6-0.zip` | 工作区里附带的 STM32 工具链——**本项目不使用**，列在这里只是为了说清工作区里都有什么 |
-| `Tool/UartAssist.exe`、`Tool/NetAssist.exe` | 串口/网络调试助手 |
-| `OpenHarmony开发板实验指导书Windows版v2.1.15(1).pdf` | 官方实验指导书 |
-| `实习项目任务书-鸿蒙开发类.pdf` | 本次任务书 |
+| **开发板** | 华清远见 FS-Hi3861（Hi3861 核心板）；板载 SHT20 温湿度、AP3216C 光照、0.96" OLED、用户 KEY；USB Type-C **数据线**（不是只供电线） |
+| **PC** | Windows 10/11 x64；安装驱动/工具需要管理员权限；建议 ≥10 GB 空闲磁盘 |
+| **固件工具链** | VSCode **System x64**（课程资料中的 1.78.2 即可）、DevEco Device Tool **3.0.x**、Hi3861 SDK（课程资料，约 0.5 GB）、DevTools_Hi3861V100 工具链（约 3 GB）、CH340 串口驱动 |
+| **Python** | **3.8+ 64 位**（本项目实测 3.9.1）；安装在**全英文路径**，安装时勾选 **Add Python to PATH** |
+| **网络** | pip 可用（国内建议镜像）；DeepSeek API 可选；不联网也能跑回放和规则引擎 |
+| **可选账号** | DeepSeek API Key（LLM 根因）；SMTP 授权码（邮件告警）；钉钉/飞书/企业微信机器人 URL（Webhook） |
 
-**而且 SDK 里已经有 40 个可直接复用的示例**，本项目所需能力全覆盖：
+> **不需要**：MQTT Broker、STM32、微信小程序。指导书第 1 章的 1.2 / 1.3 / 1.4 分别是 MQTT、STM32、小程序实验环境，本项目不涉及；代码里出现的 `F2001 MQTT 连接失败` 只是**日志故障码**，不会真的连 MQTT。
 
-| 我们需要的能力 | 现成 demo（`hi3861_application/src/vendor/hqyj/fs_hi3861/demo/`） |
-|---|---|
-| 温湿度采集 | `base_06_i2c_sht20/` |
-| 光照/接近/红外 | `base_07_i2c_ap3216c/` |
-| OLED 显示 | `base_08_i2c_ssd1306/` |
-| 风扇（模拟水泵） | `base_02_i2c_pcf8574_fan/` |
-| 蜂鸣器（报警） | `base_03_i2c_pcf8574_buzzer/` |
-| 按键（现场触发故障） | `base_01_key/` |
-| MQTT 上云 | `network_05_wifi_mqtt/`、`smartFarm/mqtt_send_task.c` |
-| 多任务（CMSIS-RTOS2） | `kernel_01_task/` ~ `kernel_08_message_queue/` |
-| **★ 完整智慧农业项目** | **`smartFarm/`**（温湿度采集 + 阈值自动控制风扇 + MQTT + OLED） |
-| **★ 多任务 + UART 任务模板** | **`Ext_Agriculture_Test/`**（多任务架构模板：oled / key / uart 任务分离，可直接借它的任务骨架） |
+---
 
-> **结论：固件工作是"改造现成 demo"，不是"从零开发"。** 工作量从数周压缩到数天——**你们可以把省下来的时间全部投入到题目真正的重点：日志聚合与 LLM 分析。** 详见 `docs/04-firmware.md`。
+## 3. 目录结构
 
-### 0.5 已经写好并验证过的东西（可以直接用）
+```text
+Open-Harmony/
+├─ agri_logger/              # Python：解析、字段、窗口、分析、报告、告警
+│  ├─ parser/                #   日志解析、字段表、农场模型
+│  ├─ pipeline/              #   60s 窗口聚合与异常打分
+│  ├─ analyzer/              #   异常族聚类、证据校验、LLM/规则根因
+│  ├─ notifier/              #   控制台/文件/Webhook/邮件 四通道告警
+│  └─ ...
+├─ web/                      # 看板前端（index.html + 契约/sample，无构建步骤）
+├─ tools/                    # 启动器、采集、模拟器、固件同步、自检、诊断
+├─ firmware/                 # 固件源码 + SDK 集成文件（不随 SDK 提交）
+├─ docs/                     # 01~16 项目文档
+├─ eval/                     # 回放日志与标注数据集
+├─ reports/                  # 报告样例
+├─ reports_live/             # 真机实时报告（新生成的 *.md 不入库，保留历史样例）
+├─ reports_llm/              # 模拟器报告（样例入库）
+├─ logs/                     # 采集/启动器/告警审计日志
+├─ assets/                   # 启动器图标
+├─ hi3861_application/       # ★ 自备 Hi3861 SDK（约 0.5 GB，git 忽略）
+├─ .venv/                    # ★ 本地 Python 虚拟环境（git 忽略）
+└─ .env                      # ★ 本地密钥/告警配置（git 忽略）
+```
 
-| 文件 | 状态 | 说明 |
-|---|---|---|
-| `tools/serial_capture.py` | ✅ **已实现并验证** | **串口日志采集器**：自动发现 COM 口、断线重连、实时解析、级别过滤、落盘、退出时打印统计（解析率/行长/seq 连续性/到达间隔）。离线回放不需要 pyserial |
-| `tools/openharmony_log_sim.py` | ✅ **已实现并跑通** | 日志模拟器：6 个 zone、**13 组故障注入（28 个故障码全覆盖）**、日志静默（`--silence-every/--silence-for`）、丢包/乱序/截断/乱码信道模拟、带 ground-truth 标注、格式与行长自检 |
-| `eval/dataset/d2_demo.log` | ✅ 已生成 | 1800 秒模拟日志（4475 行，148 次故障注入），可直接开始写解析器 |
-| `eval/dataset/d2_demo.gt.jsonl` | ✅ 已生成 | 对应的评测标注（标准答案），用于算召回率/误报率 |
-| `eval/dataset/noisy_demo.log` | ✅ 已生成 | 带信道噪声的版本（2% 丢行 + 1% 截断 + 1% 乱码），用来检验采集器健壮性 |
+> `hi3861_application/`、`.venv/`、`.env` 都**不在仓库里**。前者是因为太大，后两者是因为跟本机/密钥绑定。新电脑按 §4、§5 重建即可。
 
-**抓日志（对应 §1.5 第 3 步，硬件就绪后立刻做）**：
+---
+
+## 4. Python 看板环境（没有开发板也能先跑）
+
+### 4.1 安装 Python
+
+- 从 <https://www.python.org/downloads/windows/> 下载 **64 位** 安装包（建议 3.9 / 3.10；本项目实测 3.9.1）。
+- 安装路径保持**全英文、无空格**（例如 `C:\Python39`），勾选 **Add Python to PATH**。
+- 验证：
 
 ```powershell
-# 本项目的 Python 用仓库内的虚拟环境
-# 首次先创建并装依赖（每次新开终端不需要重复）：
+python --version
+py -3 --version
+```
+
+> 如果 `python` 指向 Microsoft Store 的占位程序，请在「设置 → 应用执行别名」里关掉它，或改用 `py -3`。
+
+### 4.2 创建虚拟环境并安装依赖
+
+```powershell
+cd /d E:\harmony_run\Harmony        # 改成你的仓库路径
 python -m venv .venv
+.venv\Scripts\python.exe -m pip install --upgrade pip
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-
-# ① 环境自检（Python 版本 / pyserial / 串口 / 编码，一次看清）
-.venv\Scripts\python.exe tools/serial_capture.py --check-env
-
-# ② 看看有哪些 COM 口（拔掉板子再跑一次，少掉的那个就是它）
-.venv\Scripts\python.exe tools/serial_capture.py --list
-
-# ③ 先按板子复位键，确认物理链路通（不理解析，原样打印字节）
-.venv\Scripts\python.exe tools/serial_capture.py --monitor --port COM3 --duration 15
-
-# ④ 开始抓（关掉 DevEco 的 Monitor，它和本脚本不能同时占用同一个 COM 口）
-.venv\Scripts\python.exe tools/serial_capture.py --port COM3 --duration 60 --out logs/raw.log
 ```
 
-> **嫌路径长？先激活虚拟环境，之后直接敲 `python` 即可**：
->
-> ```powershell
-> .venv\Scripts\Activate.ps1
-> python tools/serial_capture.py --check-env
-> ```
->
-> 若提示"禁止运行脚本"，执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`。
-
-> **为什么用 `python -m pip` 而不是裸 `pip`**：机器上可能有多个 Python。`pip` 可能是别的解释器的脚本，而 `python -m pip` **一定是"当前这个 python"的 pip**，从机制上不会装错。
-> **判断标准只有一条**：`sys.executable` 打印出哪个路径，`pip install` 就得装进哪个。
-
-> **vscode 里的分工**：DevEco Device Tool 插件负责**编译/烧录**（以及它自带的 Monitor 串口工具）；本项目自己的 Python 脚本负责**采集与分析**，两者互不相干，脚本直接在 VSCode 终端里运行即可。
-> **唯一的冲突点**：Monitor 和 Python 脚本会抢同一个 COM 口（Windows 独占访问）。**用 Monitor 确认日志正常后，关掉它再用脚本抓。**
-
-**Python 解释器约定（团队统一，见 `.vscode/settings.json`）**：
-
-本项目使用**仓库内的虚拟环境** `.venv`：
-
-```
-<仓库根目录>\.venv\Scripts\python.exe           （用本机 Python 3.8+ 创建）
-```
-
-**为什么用虚拟环境**（这是踩过坑之后的选择，四条理由都实打实）：
-
-| 理由 | 说明 |
-|---|---|
-| **路径能共享** | 在仓库内，组里每台电脑路径完全一样，`.vscode/settings.json` 提交后全组生效。而 `C:\Users\<用户名>\...` 只存在于各自电脑上 |
-| **绕开跨账户写权限** | 实测：直接往别人的 Python 里 `pip install` 会报 `WinError 5 拒绝访问`（Windows 跨账户 AppData 不继承写权限）。虚拟环境不碰任何受保护目录 |
-| **隔离依赖** | 不会因为队友装了什么包而互相干扰，也不会污染系统 Python |
-| **绕开中文路径** | `.venv` 在 `E:` 盘，路径全 ASCII。这正好解决"默认用户 `某逗` 中文路径导致工具报错"的问题 |
-
-> **本项目所在机器的背景**：默认账户名是中文（`某逗`），部分工具对中文路径不友好，所以 VSCode、Python 等软件都装在了另一账户 `moudou517` 下。但**跨账户的 `pip install` 会被 Windows 拒绝**，因此最终采用"仓库内虚拟环境"这个方案，它同时解决了路径共享、跨账户权限、中文路径三个问题。
-
-> ⚠️ **换电脑 / 把仓库拷给别人时必读**：`.venv` **不能跨电脑拷贝**。它内部记录了创建它的那个 Python 的绝对路径（`pyvenv.cfg` 里的 `home=`），还会带上原电脑编译好的 `.pyd`。换机后启动会报：
->
-> ```
-> No Python at 'C:\Users\<原电脑用户名>\AppData\Local\Programs\Python\Python38\python.exe'
-> ```
->
-> 处理办法（二选一）：
-> 1. **直接运行 `start_dashboard.cmd`**：它会自动找到本机 Python、删掉失效的 `.venv`、重建并装好 `requirements.txt` 里的依赖；
-> 2. 手动：`rmdir /s /q .venv`，再按上面三步重新创建。
-
-**每台电脑首次使用（克隆仓库后执行一次）**：
+国内下载慢时：
 
 ```powershell
-# 1) 创建虚拟环境（用本机任意 Python 3.8+ 都行）
-python -m venv .venv
-
-# 2) 装依赖（串口采集、LLM 调用、报告模板、终端输出都要装）
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-# 3) 验证：Python 路径与 pyserial 位置应属于同一个 Python
-.venv\Scripts\python.exe tools/serial_capture.py --check-env
+.venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-**在终端里用它**：
+依赖清单（`requirements.txt`）：`pyserial`、`openai<1.60`、`PyYAML`、`Jinja2`、`rich`。
+
+> `.venv` **不能跨电脑拷贝**：里面的 `pyvenv.cfg` 记录的是原电脑 Python 的绝对路径，换机必然报 `No Python at '...'`。到新电脑重新执行本节即可；`start_dashboard.cmd` 检测到 `.venv` 失效时会提示重建。
+
+### 4.3 配置 `.env`
 
 ```powershell
-# 方式一：激活（之后直接敲 python 即可）
-.venv\Scripts\Activate.ps1
-# 若提示"禁止运行脚本"，执行一次：
-#   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-
-# 方式二：不激活，写全路径（推荐，不会忘）
-.venv\Scripts\python.exe tools/serial_capture.py --check-env
+copy .env.example .env
+notepad .env
 ```
 
-> ⚠️ **必须知道的一点**：VSCode 里选解释器，只影响**编辑器内的运行/调试按钮**和 Pylance 补全，**不影响终端里敲 `python` 用哪个**——终端看 PATH 或是否激活了虚拟环境。
-> **判断"装对没有"的唯一标准**：`--check-env` 打印的 `Python 路径` 和 `pyserial 位置` 属于同一个 Python。
+最少只需要填 `DEEPSEEK_API_KEY`（不填也能跑，报告会自动降级到规则引擎）：
 
-不插板子也能先验证解析逻辑（用模拟器的数据当"抓到的日志"）：
-
-```bash
-python tools/serial_capture.py --replay eval/dataset/d2_demo.log --min-level E
+```ini
+DEEPSEEK_API_KEY=sk-你的Key
+# 可选
+# DEEPSEEK_MODEL=deepseek-flash
+# DEEPSEEK_BASE_URL=https://api.deepseek.com
+# LLM_DAILY_BUDGET_CNY=5.0
 ```
 
-**立即验证模拟器（无需任何硬件）**：
+告警配置（邮件/Webhook）见 §7.2。`.env` 已被 `.gitignore` 忽略，**不要提交、不要截图外发**。
 
-```bash
-# 1) 自检：确认模拟器输出符合日志规范且不超 128 字节
-python tools/openharmony_log_sim.py --selftest
-
-# 2) 生成你自己的评测集（固定 seed，6 个组结果可横向比较）
-python tools/openharmony_log_sim.py --duration 1800 --seed 20260101 \
-    --out eval/dataset/d2_1800s.log --label-out eval/dataset/d2_1800s.gt.jsonl
-
-# 3) 边看边开发（10 倍速）
-python tools/openharmony_log_sim.py --speed 10
-```
-
-**图形启动器（日常使用 / 现场演示，推荐）**：
+### 4.4 环境自检
 
 ```powershell
-# 首次：创建桌面快捷方式（图标 = 像素扳手）
+.\run.ps1 -Check
+```
+
+会打印 Python 路径/版本、依赖状态、`DEEPSEEK_API_KEY` 是否加载。若提示脚本被禁止运行，执行一次：
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+也可以直接用 `check_all.cmd`（它还会检查串口、DevEco 烧录口、固件一致性，但后两步需要板子）。
+
+### 4.5 先跑回放模式（不需要板子）
+
+```powershell
+.\run.ps1 tools/dashboard_server.py --port 8080
+```
+
+浏览器打开 <http://127.0.0.1:8080>。默认自动挑选：
+
+1. `eval/dataset/d2_v2.log`（优先，30 分钟、148 次故障注入、带标注）
+2. `logs/multi.log`（真机采集）
+3. `eval/dataset/d2_demo.log`
+
+指定其他文件：
+
+```powershell
+.\run.ps1 tools/dashboard_server.py --port 8080 --log logs/multi.log
+```
+
+> 回放模式只读文件，**不会**生成"设备报告"，也不会触发真实告警；这是刻意设计，避免把模拟数据当成真机结论。
+
+### 4.6 创建桌面启动器（可选）
+
+```powershell
 powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
 ```
 
-之后双击桌面上的「OpenHarmony 日志分析工具」→ **选端口 → 开始** 即可：
-它会后台起看板服务、就绪后**自动打开浏览器**；点 **停止** 或 **关窗口** 会停服务并**释放串口**。
-界面只有四样：端口 / 开发板（只读，当前仅 Hi3861）/ 开始 / 停止。
-详见 [docs/12-launcher.md](docs/12-launcher.md)。
+桌面会生成「OpenHarmony 日志分析工具」（像素扳手图标）。快捷方式里存的是本机绝对路径，所以 `.lnk` 不入库，每台电脑各自生成一次。
 
-> 启动器只是"更好用的入口"，分析能力仍然全在下面这套 web 看板里 —— 两者是同一个服务，
-> 命令行方式（下面三种模式）继续保留，调试时更好用。
+---
 
-**可视化看板怎么跑（三种模式，别搞混）**：
+## 5. 开发板固件环境（按指导书第 1 章）
 
-```bash
-# ① 回放模式（默认）：循环播放静态日志文件 —— 演示算法效果、结果可复现
-python tools/dashboard_server.py --port 8080
+> 本节对应指导书 **1.1 OpenHarmony 环境搭建**（1.1.1～1.1.9）。如果你只跑 Python 看板，可以跳过本节，直接看 §6。
 
-# ② 实时模式（真机）：直接读开发板串口 —— 现场证明"数据真的来自设备"
-python tools/dashboard_server.py --port 8080 --live
+### 5.1 安装 VSCode
 
-# ③ 实时模式（模拟器）：没有板子时演示实时链路
-python tools/dashboard_server.py --port 8080 --live-sim
+- 使用 **System x64** 版本（管理员登录的电脑必须用 System 版），课程资料中的 `VSCodeSetup-x64-1.78.2.exe` 即可。
+- 必装插件：**C/C++**、**Chinese (Simplified)**、**Include Autocomplete**、**GN**；可选：vscode-icons、C-family Documentation Comments、EasyZoom。
+- DevEco Device Tool 安装后还会用到 C/C++ 与 **CodeLLDB**，按提示装齐即可。
+
+### 5.2 安装 DevEco Device Tool
+
+- DevEco Device Tool 是 OpenHarmony 的一站式开发插件，支持代码编辑、编译、烧录、调试，以 VSCode 插件形式工作。
+- 安装时选择 **全英文路径的 Python**；勾选 **Add Python to environment variables / Add Python to PATH**。
+- 安装完成后在 VSCode 扩展栏确认 DevEco Device Tool 与 C/C++、CodeLLDB 都在。
+- 本项目 `deveco.ini` 对应 **DevEco Device Tool 3.0.2 / Core 3.1.400**；更高版本一般兼容，界面可能略有差异。
+
+### 5.3 获取 Hi3861 SDK
+
+**不要直接使用 Gitee 上最新代码**（在线工程经常变化，可能与课程实验不兼容）。使用课程资料中的：
+
+```text
+\程序源码\hi3861_hdu_iot_application.rar
 ```
 
-然后浏览器打开 `http://127.0.0.1:8080`。
+解压要求：
 
-> ⚠️ **一定要分清这三种模式**：
-> **回放模式下，"关掉开发板日志照样在刷"是正常的**——它读的是磁盘上的文件，
-> 和板子通没通电毫无关系。这在现场演示时极容易被误解成"数据是假的"。
->
-> 界面上有明确标识，不会看错：
-> - 右上角徽标：`回放 · d2_v2.log`（琥珀）／`实时 · COM3`（绿色跳动）／`离线 · COM3已停`（红色）
-> - 日志流标题旁的模式条：回放时直接写 **"回放中 · 循环播放 xxx.log —— 与开发板是否通电/连接【无关】"**
->
-> **要在评委面前证明"真的在采设备数据"，就用 `--live`**：
-> 拔掉板子/断电，6 秒内徽标变红 `OFFLINE`、日志流停止增长；
-> 插回去，5 秒退避后**自动重连**，日志继续。这一来一回本身就是最有力的证据。
-> 若换 USB 口导致 COM 号变化，点日志流右上角的**「重新连接」**（掉线后也会自动触发一次）。
+- 解压到**全英文、无空格、路径尽量短**的目录（例如 `D:\Hi3861\`）；
+- 整个路径不超过 **260 个字符**（Windows 限制），否则编译会报路径过长；
+- **推荐**把 SDK 放到本仓库根目录并命名为 `hi3861_application`，这样 `tools/sync_firmware.py`、`tools/sync_com_port.py` 可以直接工作：
 
-**实时模式下会自动出报告（默认开启）**：一旦检测到**新的异常窗口**，后台会自动调用 LLM 识别该异常，
-并生成**这一条异常专属的 `.md` 报告**（写入 `reports_live/`，文件名 `窗口号_异常名.md`），报告**标题下方
-第一行就是「摘要」**——一句话说清"哪个设备、什么现象"。不需要点按钮，也不需要浏览器开着。
+```text
+<仓库根目录>\
+├─ firmware\
+├─ tools\
+├─ web\
+└─ hi3861_application\      ← SDK 解压到这里
+   ├─ src\
+   ├─ .deveco\
+   └─ ...
+```
 
-> 三道闸防止失控：① 只分析**已闭合**的窗口（还在增长的那个先不动）；② 同一窗口只出一份；
-> ③ 同一类异常 **180 秒**内不重复出报告。LLM 不可用 / 超预算时自动降级为规则引擎，
-> **报告照样生成**，只是摘要变成模板句。加 `--no-auto-analyze` 可关闭，回到"点按钮才出报告"。
+> SDK 约 0.5 GB、2.6 万个文件；`Tool/` 工具链约 3 GB。它们**都不入 Git**，新电脑需要重新获取/解压。
 
-**按设备看（单设备视角）**：顶栏有一个**设备选择器**，选中某个棚后，
-KPI / 时间线 / 异常族 / 根因报告 / 日志流**全部只由这个棚的日志算出**。
+### 5.4 导入 SDK 到 DevEco
 
-> 为什么需要：真实运维是按设备看的。"6 个棚的整体统计"看不出"3 号棚今天特别不对"。
-> 单设备视角还有个实际好处——**异常分数不会被其它棚的正常日志摊薄**。
-> 实测：全部视角显示"2 个异常窗口"，切到单设备后能立刻看出
-> **A 棚是传感器读取超时、D 棚是看门狗即将触发**，B/C/E/F 正常。
->
-> 注意：`z=-` 的日志（健康检查、启动事件）是整机性质的，
-> 不属于任何单个棚，选中具体设备时会被排除 —— 否则"这个棚的日志"里会混进整机事件。
+1. VSCode 打开后，进入 **DevEco Device Tool 主页** → **导入工程**。
+2. 选择 `hi3861_application` 目录（zip 解压后可能叫 `hi3861_hdu_iot_application-master`）。
+3. 后续弹窗：**SOC = Hi3861**，**开发板 = hi3861**，**框架 = hb**，点击导入。
+4. 导入成功后，后续可从 DevEco 主页直接打开该工程。
 
----
+### 5.5 配置编译工具链
 
-## 1. 文档地图
+先把课程资料「工具软件」里的 **DevTools_Hi3861V100** 工具包解压到**全英文目录**（例如 `D:\Hi3861\Tool\`），再按下面配置：
 
-| 文档 | 内容 | 主要读者 |
-|---|---|---|
-| **README.md**（本文） | 总体方案、实验内容、三人分工、12 周计划、验收标准 | 全体 |
-| [docs/01-requirements.md](docs/01-requirements.md) | 选题定位、需求拆解、技术指标、评分标准对照表 | 组长 / 答辩人 |
-| [docs/02-log-spec.md](docs/02-log-spec.md) | **日志规范白皮书**（HiLog 真实约束 + 字段字典 + 故障码/错误码字典 + 冻结正则） | **全体必读，W2 冻结** |
-| [docs/04-firmware.md](docs/04-firmware.md) | **基于本仓库 SDK 的固件开发**（可复用的 40 个 demo、板载 SHT20/AP3216C 驱动、故障注入、模拟器） | 固件负责人 |
-| [docs/06-llm-analysis.md](docs/06-llm-analysis.md) | LLM 分层调用架构、提示词工程、缓存与成本控制、三级降级、防幻觉 | 算法负责人 |
-| [docs/07-evaluation.md](docs/07-evaluation.md) | 评测方案、标注数据集、指标定义、消融实验、报告模板 | 全体 |
-| [docs/08-deliverables-and-defense.md](docs/08-deliverables-and-defense.md) | 交付物清单、技术报告大纲、答辩问题库（18 问）、分组任务清单 | 组长 / 答辩人 |
-| [docs/09-troubleshooting-log.md](docs/09-troubleshooting-log.md) | **真机调试踩坑记录**（14 个实战验证过的坑 + 排查决策树） | **上机前必读** |
-| [docs/12-launcher.md](docs/12-launcher.md) | **图形启动器**（选端口 → 开始 → 自动开看板；像素扳手图标、桌面快捷方式、关窗即停并释放串口） | 全体 / 现场演示 |
-| [docs/13-alerting.md](docs/13-alerting.md) | 告警通道与邮件通知（策略、配置、**实现指南**与可行性验证） | C / 现场演示 |
-| [docs/14-api-interface-spec.md](docs/14-api-interface-spec.md) | **接口规范**（19 个 HTTP 接口的字段、类型、轮询节奏） | 做前端的同学 |
-| [docs/15-data-formats.md](docs/15-data-formats.md) | **数据格式总册**（串口物理层 → 日志行 → 字段编码 → LogRecord → 报告 Markdown → 告警事件，6 层全带真实样例） | 做前端的同学 / 答辩人 |
-| [docs/16-frontend-dev-guide.md](docs/16-frontend-dev-guide.md) | **前端开发规范**（文件组织、接入方式、一键更换、六条硬规范、自检清单） | 做前端的同学 |
+1. 左侧「工程配置」→ 选择自定义工具包（部分版本没有这一屏，直接下一步）。
+2. 在 `hi3861` 下找到 **`compiler_bin_path`**，指向你解压的 **`DevTools_Hi3861V100_v1.0`** 目录（通常在课程资料的 `Tool\` 下）。
+3. 同理检查 `.deveco/deveco.ini` 中的 `compiler_bin_path`：
 
-> 编号 03/10/11 已退役并删除，编号保留不复用。
+```ini
+compiler_bin_path = D:\Hi3861\Tool\DevTools_Hi3861V100_v1.0
+```
 
-**推荐阅读顺序**：README → 01 → 02 →（按分工）04/05/06 → 07 → 08。
+> 这是**每台电脑都不同**的绝对路径。仓库里的 `deveco.ini` 只是模板，照抄别人的路径一定编译失败。
 
----
+### 5.6 把本项目的固件集成进 SDK
 
-## 1.5 ★ 第一天上手清单（约 60 分钟，按顺序做）
-
-> 环境已验证通过（能编译、能烧录、Python 虚拟环境可用）。下面三步**每一步都可独立验收**，做完你就有了完整可用的数据源。
-> **核心原则：先验证"能拿到日志"，再验证"日志内容对"。不需要接任何线——温度、湿度、光照三项读数全在板子上。**
-
-### 第 1 步：确认 Hi3861 能吐日志（30 分钟）★ 最重要
-
-**显式用 `base_06` 验证，不要直接用按键 demo。** `base_01_key` 几乎不打印日志，会让你误以为串口坏了。
-
-1. `demo/BUILD.gn` 里启用 `"base_06_i2c_sht20:base_sht20_example"`（**已替你改好，只需编译烧录**）
-2. 先开监视器，再编译烧录：
-
-   ```powershell
-   .venv\Scripts\python.exe tools/serial_capture.py --monitor --port COM3 --duration 60
-   ```
-
-3. 期待每秒一行 `temperature = 25.50      humidity = 60.20`
-4. **对着板载 SHT20 哈一口气**，湿度应立刻上升
-
-> ⚠️ 这个 demo 的输出**没有 hilog 前缀**，所以用采集器抓时解析率会是 0%——**这是正常的**。规范格式要等 W3 写 `agri_logger` 时才有。本步只验证"链路通 + 传感器活"。
-
-✅ **验收**：串口每秒有输出，且哈气后湿度变化。**一个动作同时证明了工具链、烧录、串口、传感器四件事。**
-
-### 第 2 步：确认 AP3216C 的光照读数（10 分钟）
-
-板载 SHT20 只给温度和湿度；**光照这一项来自板载 AP3216C**（ALS 环境光）。它是本项目三项真实读数里的第三项，所以单独验一遍：
-
-1. `demo/BUILD.gn` 里改启用 `"base_07_i2c_ap3216c:base_ap3216c_example"`，其余全部注释掉，编译烧录
-2. 用采集器看串口：
-
-   ```powershell
-   .venv\Scripts\python.exe tools/serial_capture.py --monitor --port COM3 --duration 30
-   ```
-
-3. **用手盖住板子上的 AP3216C 芯片**，ALS 读数应明显下降；松手后回升
-
-> **为什么这一步要单独做**：现场演示的"物理触发告警"就是遮住 AP3216C（见 §5 演示剧本 ②）。如果读数对遮挡没反应，就等于演示素材不存在——**先验证，再排练**。
-
-✅ **验收**：遮住时 ALS 读数下跌、松手后回升。**一个动作证明了"第三项真实读数可用"。**
-
-### 第 3 步：确认采集器能抓到真机日志（10 分钟）
+本仓库的 `firmware/` 只是**版本存档**，编译器不会直接读它；需要把源码和编译配置放进 SDK。推荐流程：
 
 ```powershell
-.venv\Scripts\python.exe tools/serial_capture.py --port COM3 --duration 60 --out logs/raw.log
+# 1) 覆盖三份 SDK 集成配置（SDK 在仓库根目录时）
+Copy-Item firmware\sdk-integration\app_BUILD.gn  "hi3861_application\src\applications\sample\wifi-iot\app\BUILD.gn" -Force
+Copy-Item firmware\sdk-integration\demo_BUILD.gn "hi3861_application\src\vendor\hqyj\fs_hi3861\demo\BUILD.gn" -Force
+Copy-Item firmware\sdk-integration\deveco.ini    "hi3861_application\.deveco\deveco.ini" -Force
+
+# 2) 把固件源码部署到 SDK（默认方向：firmware → SDK）
+.venv\Scripts\python.exe tools\sync_firmware.py
+
+# 3) 核对两边是否一致
+.venv\Scripts\python.exe tools\sync_firmware.py --check
 ```
 
-✅ **验收**：`logs/raw.log` 里有内容，统计里"重连次数 = 0"、到达间隔稳定在 1 秒。
+三个配置文件的职责：
 
-> ⚠️ **已知的两个"看起来像故障其实是正常"的现象**（实测确认，别被吓到）：
-> 1. **解析率 0%** —— `base_06` 是官方 demo，用裸 `printf` 输出 `temperature = 28.12  humidity = 45.43`，**没有 hilog 前缀**，所以规范解析器认不出来。**规范格式要等 W3 写 `agri_logger` 时才有**，当前阶段只看"有没有数据、稳不稳定"。
-> 2. **收不到任何字节** —— 那是 DTR/RTS 电平或 bootloader 残留问题，**已修复**（`open_port()` 默认 `dtr=True, rts=True`）。若日后再遇到，先跑 `python tools/uart_diagnose.py`（12 秒定位），并**物理拔插一次 USB**。详见 `docs/09-troubleshooting-log.md`。
-
-### 同时（不占用硬件时间）：不依赖真机的两条线
-
-| 谁 | 做什么 | 命令 / 文件 |
+| 文件 | SDK 目标路径 | 作用 |
 |---|---|---|
-| **B、C** | 用模拟器产出的数据集开始写解析器（**不必等真机固件**） | `eval/dataset/d2_demo.log`（4475 行） |
-| **三人** | 开一次会冻结日志规范 | `docs/02-log-spec.md`（**W2 必须冻结**） |
+| `app_BUILD.gn` | `src\applications\sample\wifi-iot\app\BUILD.gn` | 决定**编译哪个应用**；本项目只启用 `agri_logger:agri_logger` |
+| `demo_BUILD.gn` | `src\vendor\hqyj\fs_hi3861\demo\BUILD.gn` | 官方 demo 集合；只保留 SHT20，供切回官方 demo 时使用 |
+| `deveco.ini` | `.deveco\deveco.ini` | DevEco 的编译/烧录/监视配置（COM 口、工具链路径、烧录速率） |
 
----
+`sync_firmware.py` 只同步三个源码文件：
 
-## 2. 实验内容总览（要做出来的东西）
-
-### 2.1 场景设定
-
-> **"智慧农业温室大棚集群"**：一个农业园区有 6 个大棚（Zone-A ~ Zone-F），棚里部署环境监测节点，周期性上报温度、湿度、光照数据；温湿度异常时触发灌溉/通风设备。园区运维平台需要从这 6 个逻辑设备的日志中自动发现异常并给出根因。
-
-> **实现上的对应关系**（必须说清，否则答辩一定被追问）：园区里只有 **1 个真实监测节点**——一块 FS-Hi3861，板载 SHT20 给温湿度、板载 AP3216C 给光照。它输出的 **6 个逻辑设备** 对应 6 个大棚：6 个棚在同一个园区，共享同一片天空和同一时段天气，所以在同一份真实读数上派生棚与棚之间的差异（朝向、位置、热惯性）是合理的建模。**真实的是读数本身，派生的是棚与棚之间的差异。**
-
-选这个场景的理由：
-- 与参考资料中华清远见《智慧农业》项目同源，答辩时容易讲清楚业务价值；
-- 天然支持"多设备 + 周期上报 + 阈值告警"，正好匹配题目里"每 5 秒上报、正常 INFO、偶发 ERROR"的要求；
-- **温度/湿度/光照都是板载传感器真实读出来的**，且现场可用手遮 AP3216C、对 SHT20 哈气等物理动作触发告警，数据不是凭空捏造。
-
-### 2.2 数据流向（单节点方案）
-
-```
-        ┌──────────────────────── FS-Hi3861（唯一设备端）─────────────────────┐
-        │  板载 SHT20（真实温湿度）     板载 AP3216C（真实光强 ALS）           │
-        │        │                              │                            │
-        │        └──────────┬───────────────────┘                            │
-        │                   ▼                                                │
-        │            task_sensor  每 5s 采样 → 派生 6 个 zone 的环境值         │
-        │                   │                                                │
-        │        ┌──────────┴───────────┬──────────────┬─────────────┐        │
-        │        ▼                      ▼              ▼             ▼        │
-        │  task_zone_A ... task_zone_F（6 个上报任务，各自独立 seq/故障场景）  │
-        │        │                                                           │
-        │  task_health（heap/栈水位）   task_fault（故障注入）  task_key（按键）│
-        │        │                                                           │
-        │        └──────────► AGRI_LOG 宏 → hilog 同构格式 → UART0/printf     │
-        └────────────────────────────┬───────────────────────────────────────┘
-                                     │ USB Type-C（板载 USB 转 UART）
-                                     │ COM ____   115200 8N1
-                                     ▼
-        ┌────────────────────────────────────────────────────────────────────┐
-        │                  PC 端 Python 工具链（本项目主体）                   │
-        │  collector → parser → filter → templater → aggregator               │
-        │                              → llm_analyzer → notifier → report      │
-        └────────────────────────────────────────────────────────────────────┘
+```text
+firmware/hi3861/agri_logger/agri_logger_multi.c  →  SDK/.../app/agri_logger/agri_logger_multi.c
+firmware/hi3861/agri_logger/log_def.h             →  SDK/.../app/agri_logger/log_def.h
+firmware/hi3861/agri_logger/BUILD.gn              →  SDK/.../app/agri_logger/BUILD.gn
 ```
 
-> **图里两处最容易看错的地方**：① 板子上只有 **一个** 传感器节点——SHT20 与 AP3216C 都在同一块 PCB 上，不是"每行一个传感器"；② `task_sensor` 采到的**一组**真实读数会被派生成 6 个 zone 的差异值，**基准值只有一个真实来源**。固件切到单设备模式（`SINGLE_DEVICE_MODE 1`、`ZONE_COUNT=1`）时不做派生，只上报 Zone-A 的原始读数。
+> 如果 SDK 不在仓库根目录，`sync_firmware.py` 的默认路径会找不到。此时请手工把上面三个文件复制到 `<SDK>\src\applications\sample\wifi-iot\app\agri_logger\`，或把 SDK 放到仓库根目录再跑脚本。
+>
+> 指导书 1.1.6 里把产品配置写成 `.../wifi-iot/BUILD.gn`；本 SDK 实际文件是 `.../wifi-iot/app/BUILD.gn`，以实际存在的文件为准。
 
-**双通道采集**是"稳定获取设备日志"这个评分点的直接支撑：
-- **串口通道（主）**：本地实时、零依赖，答辩演示必用；
-- **MQTT 通道（备）**：把同一份日志经 WiFi 发到本机 mosquitto（`Tool/mosquitto-1.6.9`），演示"如果园区有 100 个大棚"的扩展性。**不依赖外网**。
-- 采集器 **自动故障切换**：MQTT 断连时回落串口，串口断开时自动重连。
+### 5.7 修改 COM 口与烧录参数
 
-### 2.3 功能模块
+打开 `hi3861_application\.deveco\deveco.ini`，至少确认：
 
-| 模块 | 做什么 | 对应题目 | 交付物 |
-|---|---|---|---|
-| M1 设备端多任务模拟 | Hi3861 多任务日志生成 + 板载传感器真实采集 + 故障注入 | (1) | 固件源码 + 烧录说明 |
-| M2 日志采集与解析 | 串口/MQTT 抓取、正则解析、字段提取、实时过滤 | (2) | `collector/`、`parser/` |
-| M3 异常模式识别 | 关键词库 + 日志模板挖掘 + 统计信号 + LLM 语义聚类 | (3) | `detector/`、`clustering/` |
-| M4 智能告警与报告 | LLM 根因摘要、告警治理、邮件/Webhook 推送、报告生成 | (4) | `analyzer/`、`notifier/` |
-| M5 可视化看板 | 实时日志流、异常时间线、聚类气泡、报告列表 | 加分项 | `web/` |
-| M6 评测与文档 | 标注数据集、指标脚本、技术报告、答辩 PPT | 评价项 | `eval/`、`docs/` |
-
----
-
-## 3. 三人分工（一人一层，接口在 `docs/02` 冻结）
-
-**分工原则：按住"数据流经的层"切，而不是按功能点切。** 这样每人的产出边界清晰，接口只有一个（`LogRecord` 结构 + 日志规范），不会互相等。
-
-```
-设备端固件  ──串口──▶  采集解析聚合  ──Window/异常──▶  识别分析与报告
-   A 同学                B 同学                      C 同学
+```ini
+upload_port = COM5          # 改成设备管理器里 CH340 的 COM 号
+monitor_port = COM5         # 同上
+upload_speed = 921600
+compiler_bin_path = D:\Hi3861\Tool\DevTools_Hi3861V100_v1.0
 ```
 
-| | **A · 设备端与数据源** | **B · 采集解析与聚合** | **C · 识别分析与交付** |
-|---|---|---|---|
-| **主责** | Hi3861 固件、日志规范、模拟器、评测数据集 | 串口采集、解析、过滤、模板挖掘、存储 | 异常识别、LLM 分析、告警、报告、看板 |
-| **对应评分项** | 日志规范性、采集稳定性（数据源侧） | **解析字段完整性、过滤功能、稳定性** | **异常识别效果、报告与告警** |
-| **核心交付** | `firmware/`、`tools/openharmony_log_sim.py`、`eval/dataset/` | `collector/`、`parser/`、`pipeline/`、单测 | `detector/`、`analyzer/`、`notifier/`、`report/` |
-| **关键难点** | 6 个 zone 的栈开销、128 字节行长限制、故障注入的判据真实性 | 断线重连、跨 read 行缓冲、时间轴换算、模板归一化 | **日志静默检测**（召回率提升最大的一步）、防幻觉证据架构、成本控制 |
-| **工作量** | ★★★☆ | ★★★★ | ★★★★★ |
-| **建议** | 兼项目协调、答辩主讲 | 兼评测脚本 | 兼技术报告统稿 |
-
-**为什么这样切**（答辩可能被问，答案要能说清）：
-
-| 理由 | 说明 |
-|---|---|
-| **接口最少** | 三人之间只有一个契约——日志规范和 `LogRecord`。规范在 W2 冻结后，三人可完全并行 |
-| **每人都有"技术深度"** | A 讲"轻量设备的日志规范设计与资源约束"；B 讲"日志模板挖掘与采集稳定性工程"；C 讲"三层识别框架与 LLM 成本/幻觉控制" |
-| **风险隔离** | 硬件出问题时 B、C 用模拟器照常推进；LLM 出问题时 A、B 不受影响 |
-| **工作量可再平衡** | C 最重。若吃紧，可把 **M5 可视化看板（加分项）** 砍掉或交给 A 分担；**核心四项任务不受影响** |
-
-> ⚠️ **三人团队的现实提醒**：题目要求的四项核心任务 + 评测 + 文档 + 答辩，三人做是**紧但不至于做不完**的。真正的风险不是技术难度，而是**W2 不冻结规范导致反复返工**。把这次会议开好，比多写 500 行代码重要。
-
-### 3.1 "智能聚合"体现在哪里（跨模块因果关联）
-
-"多源关联分析"不靠第二块板子、也不靠第二路串口——**本项目全部日志来自同一个节点**，所以"聚合"发生在**同一份日志流内的跨模块因果关联**上。分析价值不降反升，因为不需要跟任何外部设备做时间同步：
-
-```
-F3006 heap_low (A003 AgriHealth)
-    │ +1.2ms
-F3001 alloc_failed (A003 AgriHealth)          ← 根因
-    │ +0.5ms
-F2002 publish_timeout (A002 AgriReport)       ← 次生故障
-```
-
-**这仍然是"智能聚合"与"关键词告警"的分水岭**：不做关联 → 报 3 条独立告警；做关联 → 报 1 条带因果链的告警并指出根因是堆内存枯竭。实现见 `docs/06` §8，因果规则表按 `domain` 匹配即可（`A003 → A002`）。
-
-> **写进技术报告的价值**：这体现了"**从多设备并行日志中识别因果链**"的能力，比"把几台设备的数据各存一份"更贴近真实运维场景——真实园区里，一个根因会同时污染多个模块的日志，运维的难点正是**把碎片化的告警还原成一条因果链**。
-
----
-
-## 4. 12 周实施计划
-
-| 周次 | 阶段 | 关键任务 | 里程碑（可验收） |
-|---|---|---|---|
-| W1 | 开题 | 需求拆解、场景确定、物料清点、环境验证（编译+烧录一个官方 demo）、Python 环境 | 开题报告 + 真机 demo 截图 |
-| W2 | 协议 | **定稿日志规范**（冻结字段、故障码、错误码字典）；三人对齐分工；A 交付模拟器 v0.1 | `log-spec v1.0` 冻结 |
-| W3 | 设备端 | 基于 `smartFarm` 改造出 agri_logger：6 个 zone 任务 + 规范日志输出 | 真机规范日志样本 1000 行 |
-| W4 | 采集 | Python 采集器（串口/MQTT + 断线重连）+ 解析器 + 单元测试 | 解析成功率 ≥ 99% |
-| W5 | 聚合 | 过滤（5 维度）+ 落盘（JSONL/SQLite）+ 模板挖掘 | 过滤演示 + 模板压缩率 |
-| W6 | 设备端 | 真机连续跑 2 小时：稳定性、堆内存曲线、seq 连续性 | 无泄漏证据 + 连续性报表 |
-| W7 | 识别 | 关键词库（≥80 条）+ 多信号打分 + **日志静默检测** | 关键词命中率报告 |
-| W8 | 识别 | LLM 语义聚类 + 缓存 + 降级策略；**同步写出 `metrics_detect.py`** | 聚类结果 + 首个完整指标 |
-| W9 | 分析 | LLM 根因分析 + JSON Output 约束 + 成本统计 + 跨模块因果关联 | 报告样例 ≥ 20 份 |
-| W10 | 告警 | 告警策略引擎（去重/抑制/升级）+ 邮件/Webhook | 真实收到告警邮件 |
-| W11 | 评测 | 标注数据集、指标脚本、消融实验（A0~A5） | 评测报告 |
-| W12 | 收尾 | 技术报告、README、演示视频、答辩 PPT、代码规范清理 | 全部交付物 freeze |
-
-**每周固定动作**：三人周会 30 分钟（各 3 分钟同步 + 接口变更讨论）。**接口变更必须走"改 `log-spec` → 全组通知 → 重跑回归"流程。**
-
----
-
-## 5. 验收标准（对照题目评价表）
-
-| 评价维度 | 验收指标 | 验证方式 |
-|---|---|---|
-| **日志采集与解析** | 连续采集 ≥ 2 小时无丢日志（序号连续性 ≥ 99.9%）；解析成功率 ≥ 99%；字段完整率 ≥ 99%；过滤支持 ≥ 5 种维度 | 现场跑 2h + 自动报告 |
-| **异常识别效果** | 关键词库 ≥ 80 条覆盖 ≥ 8 类异常；故障场景召回率 ≥ 85%，误报率 ≤ 10%；LLM 判定准确率 ≥ 80%（对比人工标注 100 条） | `eval/` 指标脚本一键出结果 |
-| **报告与告警** | 报告含"现象/证据/根因/影响/处置建议"5 段 + 一句话摘要，引用真实行号时间戳（不得幻觉）；**检到异常后推送秒级完成**（端到端含 LLM 分析约 5~25 秒，口径见 `docs/13` §4.5） | 现场触发故障 → 看告警 |
-| **文档与答辩** | 技术报告 ≥ 5000 字；代码有 README + 注释 + 单测；演示 8 分钟不翻车 | 答辩评审 |
-
-**现场演示剧本（8 分钟）**：① 大棚正常运行，看板显示 6 个逻辑设备的 INFO 流 → ② **用手遮住板载 AP3216C**（真实物理动作，不碰代码）→ ③ 控制台红色告警 + 邮件到达（**推送本身秒级；含 LLM 分析的端到端约 5~25 秒**，若想更快可用 `--no-llm` 走规则摘要，见 `docs/13` §4.5）→ ④ 打开自动生成的根因报告，读"检测到 设备 A 在 … 发生…，疑似…" → ⑤ 按用户按键触发软件注入故障，展示"堆不足 → 分配失败 → 上报超时"的因果链 → ⑥ 展示评测报告指标与消融实验表。
-
-> **演示设计要点**：② 是**纯物理触发**，评委亲眼看到你的手在动、告警在响——这比任何软件模拟都有说服力。⑥ 展示消融实验表，证明每个模块都有可量化的独立贡献。
-
----
-
-## 6. 风险与预案（务必提前看）
-
-| 风险 | 概率 | 影响 | 预案 |
-|---|---|---|---|
-| ~~Hi3861 工具链安装失败~~ | **已消除** | — | 工具链与 SDK 已随工作区提供（`Tool/DevTools_Hi3861V100_v1.0/`、`hi3861_application/`），且 SDK 自带 40 个可复用 demo |
-| DevEco Device Tool 与 VSCode 环境配置出错 | 中 | 阻塞编译/烧录 | 参照 `OpenHarmony开发板实验指导书Windows版v2.1.15(1).pdf` 与 `hi3861_application/doc/物联网技术及应用实验指导手册.md`（9000 行，图文并茂）；**路径不能有中文、不能超 260 字符**（`E:\Code\Harmony` 合规） |
-| **日志行超过 128 字节被 `hilog_lite` 静默丢弃** | **中（高隐蔽性）** | 故障日志"消失"，极难排查 | 固件侧用宏控制行长；Python 侧统计行长分布，`max > 128` 立即告警（`docs/02` §2.2、§6） |
-| **三人分工出现"忙闲不均"** | **中高** | 进度失衡，C 同学成为瓶颈 | C 的任务最重。每周周会检查三人进度，及时把 **M5 看板（加分项）** 砍掉或转给 A；**核心四项任务优先级最高，任何情况下不砍** |
-| **W2 不冻结规范导致返工** | 中 | 后期大量返工、接口不兼容 | **这是本项目最大的风险**。W2 必须开会冻结 `docs/02`，之后变更走评审流程 |
-| 6 个 zone 任务占用 24KB 栈导致内存紧张 | 中 | 运行不稳定 | 用 `osThreadGetStackSpace()` 实测栈水位；降级为 2 个上报任务各管 3 个 zone（`docs/04` §2.4） |
-| LLM API 不稳定或额度耗尽 | 中 | 阻塞 M3/M4 | 实现 **三级降级**：LLM → 本地规则库 → 纯事实报告；降级模式在报告中醒目标注，答辩时反而是加分点 |
-| 答辩演示时 WiFi 不通 | 中 | 演示翻车 | 演示以**串口为主线**；MQTT 用本机 `Tool/mosquitto-1.6.9` 自建 broker，**不依赖外网** |
-| 实测数据不足，指标无说服力 | 中 | 评测章节单薄 | 模拟器可随时生成任意时长、任意规模的带标注数据集；**W8 就要开始累积评测数据**，不要拖到 W11 |
-
----
-
-## 7. 立即可做的四件事（今天就能推进）
-
-1. **烧 `base_06` 确认串口有输出**（`BUILD.gn` 已替你改好）：`base_sht20_example` 每秒打印一次温湿度，**对着传感器哈气看湿度变化**。这一步通了 = 工具链、烧录、串口、传感器全部 OK。详见 §1.5。
-2. **开一次会，做两件事**：① 冻结 `docs/02-log-spec.md` 的字段字典；② 按 §3 认领三人的层。**这一步偷懒，后面会反复返工。**
-3. **确认 Python 环境**：`.venv\Scripts\python.exe tools/serial_capture.py --check-env`（虚拟环境已建好，pyserial 已装）。申请一个 DeepSeek API Key（[platform.deepseek.com](https://platform.deepseek.com/api_keys)），跑通 `docs/06` §3 的最小调用样例。
-4. **B 和 C 今天就能开工**：`.venv\Scripts\python.exe tools/openharmony_log_sim.py --selftest`，然后用 `eval/dataset/d2_demo.log`（4475 行、148 次故障注入）开始写解析器。**不必等真机固件。**
-
----
-
-## 8. 与上游仓库同步（保持代码基线一致）
-
-**本仓库的全部代码以 `bratatata526/Open-Harmony` 为基线**，不是另起一套：
-
-| 项 | 值 |
-|---|---|
-| 上游仓库 | `https://github.com/bratatata526/Open-Harmony.git`（git remote 名 `classmate`） |
-| 本工作基于的提交 | **`856e2e9`**（`feat: 图形启动器 + 模拟器故障码全覆盖 + 报告摘要`） |
-| 关系 | 本工作是它的**直接后续**（fast-forward 合入，无分叉、无重写） |
-| 本仓库自己的远程 | `origin` → `moudou517/openharmony-log-analyzer` |
-
-**同步同学的新提交**（他再推东西时，这样拉下来而不产生分叉）：
+也可以让脚本自动把 COM 口同步成当前实际检测到的端口：
 
 ```powershell
-# 代理不通时加 -c http.proxy= -c https.proxy=（本机实测过这个坑）
-git -c http.proxy= -c https.proxy= fetch classmate
-git merge --ff-only classmate/main        # 能快进就快进；有分叉它会拒绝而不是乱合
+.venv\Scripts\python.exe tools\sync_com_port.py          # 检测并写入
+.venv\Scripts\python.exe tools\sync_com_port.py --check  # 只检查，不修改
 ```
 
-**为什么必须这样做**：如果两边各改各的、直接 `push --force`，
-同学的固件/模拟器改动会被覆盖，而 `firmware/hi3861/` 与 `tools/` 是**他主责**的目录。
-一旦基线错位，"同一个解析器能吃真机和模拟器两路日志"这条验收依据就不成立了。
+> Windows 按**物理 USB 插口**分配 COM 号，换个 USB 口就可能从 COM3 变成 COM4/COM5。烧录前先确认端口，能避免大量"upload port is occupied"的误判。
 
-**改动边界（本工作只碰这些）**：
-`agri_logger/analyzer/`（摘要与提示词）、`agri_logger/notifier/`（新增告警层）、
-`tools/dashboard_server.py`（接口与调度）、`web/`（新增契约与样例，**未改 `index.html`**）、
-`docs/`、`README.md`、`.env.example`。
-固件（`firmware/`）除了改掉一处指向已删文档的注释外**未动**。
+### 5.8 编译
+
+1. VSCode **打开 `hi3861_application` 目录**（不是仓库根目录）。
+2. 左侧 **DevEco Device Tool** → **PROJECT TASKS**。
+3. 点 **`Rebuild`**（首次建议 Rebuild，之后可 Build）。
+4. 等待输出窗口出现 **`BUILD SUCCESS`**。首次编译会解压工具，约 1～2 分钟；之后通常更快。
+
+> 注意：DevEco 的 **Stack Analysis** 也会打印 `[SUCCESS] Took 2.28 seconds`，但它**只分析旧固件，不编译不烧录**。判断是否真的编译成功，看 `BUILD SUCCESS` 和产物时间戳。
+
+### 5.9 烧录
+
+1. 安装 **CH340 驱动**：课程资料 `工具软件\CH340 驱动\CH341SER.EXE`，双击安装。
+2. USB Type-C 连接开发板与电脑，打开板子左下角**电源开关 S1**。
+3. 设备管理器确认出现 `USB-SERIAL CH340 (COMx)`。
+4. DevEco → **`Upload`** → 确认 `upload_port` → 点 Upload。
+5. 出现 **`Connecting, please reset device...`** 时，按一下板子的**复位键**。
+6. 等待约 30 秒，提示烧录成功。
+7. **★ 烧录完成后物理拔插一次 USB 线（拔掉 → 等 5 秒 → 重新插上）★**
+   - HiBurn 会把芯片留在 bootloader；如果不拔插，板子可能连 ROM 日志都不打印，现象与"板子坏了"完全一样。
+   - **按复位键不够**，必须重新枚举 USB。
+
+> 烧录/监视期间，DevEco Monitor、`serial_capture.py`、看板**不能同时占用同一个 COM 口**（Windows 独占）。用哪个就关掉另一个；看板请先点「停止」再烧录。
+
+### 5.10 验证固件是否真的生效
+
+先关闭 DevEco Monitor 和看板，然后：
+
+```powershell
+.venv\Scripts\python.exe tools\serial_capture.py --list
+.venv\Scripts\python.exe tools\serial_capture.py --monitor --port COM5 --baud 115200 --duration 30
+```
+
+采集期间**按一下板子的复位键**，应看到开机横幅：
+
+```text
+[agri_logger] FW=v2.8 mode=single-device(真实传感器直通), period=5000ms, tickfreq=100Hz, heap=...
+I A003 AgriSelfCheck: 1 0 5 1001 8 20480 15 -355 z=-
+```
+
+这两行是"固件真的烧进去了"的判据：
+
+- `FW=v2.8`：当前固件版本；改了日志格式请同步 +1。
+- `tickfreq=100Hz`：1 tick = 10ms，时间戳单位正确。
+- `AgriSelfCheck`：零 / 4 位 / 5 位 / 负数四个边界值都打全，说明数值转换正常。
+
+更严格的自动校验：
+
+```powershell
+.venv\Scripts\python.exe tools\check_firmware.py --port auto --duration 20
+```
+
+它会检查版本号、自检行和故障码完整性。采集期间同样按一下复位键。
+
+> 也可以直接用 DevEco 的 **Monitor**（`monitor_port` 选同一个 COM，115200）或串口调试助手（UartAssist）查看；注意串口助手的中文编码选项。
 
 ---
 
-## 9. 参考资料
+## 6. 启动与使用
 
-- [华为开发者文档 - HiLog 日志打印](https://github.com/openharmony/docs/blob/master/zh-cn/application-dev/dfx/hilog.md)（日志格式说明、级别定义、domainID 规则）
-- [hiviewdfx_hilog 组件（Gitee）](https://gitee.com/openharmony/hiviewdfx_hilog)（hilog 服务与 hilog 命令行工具）
-- [FaultLoggerd 组件文档](https://github.com/openharmony/hiviewdfx_faultloggerd/blob/master/README_zh.md)（C/C++ 运行时崩溃日志生成与管理，异常类型设计参考）
-- [Cpp Crash（进程崩溃）检测](https://gitee.com/openharmony/docs/blob/master/zh-cn/application-dev/dfx/cppcrash-guidelines.md)（崩溃日志规格）
-- [device_hisilicon_hispark_pegasus（Hi3861 官方适配）](https://github.com/openharmony/device_hisilicon_hispark_pegasus)
-- [HiSpark hi3861_hdu_iot_application 应用样例（Gitee）](https://gitee.com/HiSpark/hi3861_hdu_iot_application)
-- [华清远见 Hi3861 鸿蒙开发板 Wiki（智慧农业项目）](https://wiki.farsightdev.com/index.php?title=%E5%8D%8E%E6%B8%85%E8%BF%9C%E8%A7%81Hi3861%E9%B8%BF%E8%92%99%E5%BC%80%E5%8F%91%E6%9D%BF)
-- [DeepSeek API 文档](https://api-docs.deepseek.com/zh-cn/)（OpenAI 兼容接口、模型与价格）
+### 6.1 图形启动器（推荐）
+
+```powershell
+# 首次生成桌面快捷方式（已生成可跳过）
+powershell -ExecutionPolicy Bypass -File tools\make_shortcut.ps1
+
+# 或直接双击
+.\launcher.cmd
+```
+
+使用步骤：
+
+1. 双击桌面「OpenHarmony 日志分析工具」（像素扳手图标）或 `launcher.cmd`。
+2. 端口选「**自动发现（推荐）**」；也可以选具体 COM 口。
+3. 点「**开始**」：启动看板服务 → 等就绪 → 自动打开 <http://127.0.0.1:8080>。
+4. 点「**停止**」或关闭启动器：停止服务并**释放串口**。
+
+启动器默认是**实时真机模式**（`--live`）。没有板子时请用 §6.3 的回放命令，不要用启动器。
+
+### 6.2 一键脚本
+
+- `start_dashboard.cmd`：带控制台的一键启动，检测 `.venv`（失效时提示重建并安装依赖），然后以 `--live` 启动 8080 看板。适合"不想用启动器、想看日志"的场景。
+- `launcher.cmd`：启动器调试模式，报错会打在控制台。
+- `check_all.cmd`：环境自检 + 串口列表 + 同步 DevEco 烧录口 + 固件一致性校验（最后一步约 15 秒，需要板子）。
+- `run.ps1`：统一入口，加载 `.env` 后跑任意 Python 脚本；`run.ps1 -Check` 只做环境自检。
+
+### 6.3 命令行三种模式
+
+```powershell
+# ① 回放：不需要板子，默认读 eval/dataset/d2_v2.log
+.\run.ps1 tools/dashboard_server.py --port 8080
+
+# ② 实时真机：自动发现串口；也可加 --com COM5
+.\run.ps1 tools/dashboard_server.py --port 8080 --live --baud 115200
+
+# ③ 实时模拟器：没有板子但想演示"实时链路"
+.\run.ps1 tools/dashboard_server.py --port 8080 --live-sim
+```
+
+常用参数：
+
+| 参数 | 说明 |
+|---|---|
+| `--port 8080` | 看板端口（默认 8080） |
+| `--log <文件>` | 回放模式指定日志文件 |
+| `--live` | 实时读串口 |
+| `--live-sim` | 实时模拟器 |
+| `--com COM5` | 固定串口（默认自动发现；换 USB 口后可能变） |
+| `--baud 115200` | 串口波特率（固件默认 115200） |
+| `--window 60` | 窗口长度（秒） |
+| `--threshold 0.25` | 异常阈值 |
+| `--no-auto-analyze` | 关闭"检测到异常自动出报告" |
+
+### 6.4 看板界面
+
+打开 <http://127.0.0.1:8080> 后：
+
+- **顶栏**：运行模式（回放/实时/离线）、设备模式（`AgriMode`）、告警状态、设备选择器、KPI、声音开关、复位布局。
+- **左列**：故障码分布、异常族聚合。
+- **中列**：日志密度时间线（点击看详情/缩放）、实时日志流（级别/设备/模块/正则过滤、跟随最新、清空、重新连接）。
+- **右列**：大棚环境（点击棚卡片看详情；详情里点「区间末温度/湿度/光照」卡片只看对应曲线，再点一次恢复）、根因报告列表。
+- **告警中心**：点顶栏「告警 已就绪 / 部分就绪」打开；显示通道、已发送/失败/策略跳过、最近告警，可点「测试文件通道 / 测试邮箱通道 / 测试Webhook」。
+- **报告**：勾选 `AI分析` 后点「生成根因报告」；报告阅读器支持 Markdown 渲染和「另存为」。
+
+### 6.5 报告生成的前提
+
+界面只在 **实时真机（live && !sim）** 下允许生成设备报告；回放/模拟器会提示"无法生成设备报告"。这是为了避免把回放数据算出的报告误标成真机结论。
+
+报告输出位置：
+
+| 来源 | 目录 | 是否入库 |
+|---|---|---|
+| 真机实时 | `reports_live/` | 新生成的 `*.md` 被忽略；仓库里保留少量历史样例和 `.gitkeep` |
+| 模拟器 | `reports_llm/` | 样例入库（未忽略，按需清理） |
+| 样例 | `reports/` | 入库，供参考格式 |
+
+### 6.6 告警
+
+- 告警由实时分析触发（生成报告时），默认走「控制台 + `logs/alerts.jsonl` 审计」；邮件/Webhook 需在 `.env` 配置（§7.2）。
+- 告警中心可以一键测试通道，不需要等真实故障。
+- 演练模式 `ALERT_DRY_RUN=1`：只显示"会发什么"，不真的发，适合答辩前彩排。
+- 审计历史在 `logs/alerts.jsonl`（已被 `.gitignore` 忽略）。
 
 ---
 
-*版本：v1.0 ｜ 冻结后任何接口变更需全组评审*
+## 7. 配置说明
+
+### 7.1 `.env`：LLM
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | 空 | DeepSeek API Key；不填则自动降级规则引擎 |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | 模型名 |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API 地址 |
+| `LLM_DAILY_BUDGET_CNY` | `5.0` | 每日成本上限（元） |
+
+> `run.ps1`、启动器、看板服务启动时都会自动加载 `.env`。启动横幅会打印 `🤖 LLM 可用（deepseek-flash）` 或 `不可用 → 规则引擎降级`；没有 Key 不影响采集/解析/看板。
+
+### 7.2 `.env`：告警
+
+```ini
+# 总开关与策略
+ALERT_ENABLED=1
+ALERT_MIN_SEVERITY=P2      # P0 最严重；低于此级别只写审计文件
+ALERT_DRY_RUN=0            # 1 = 演练，不真发
+ALERT_COOLDOWN_S=180
+ALERT_MAX_PER_HOUR=12
+
+# 邮件（QQ 邮箱示例）
+ALERT_EMAIL_ENABLED=1
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=465
+SMTP_SECURITY=ssl
+SMTP_USER=你的QQ号@qq.com
+SMTP_PASSWORD=QQ邮箱授权码        # 不是登录密码！
+ALERT_EMAIL_FROM=你的QQ号@qq.com
+ALERT_EMAIL_TO=收件人@example.com,另一个人@example.com
+
+# Webhook（钉钉/飞书/企业微信/自建）
+ALERT_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=xxxx
+# ALERT_WEBHOOK_KIND=auto    # auto | dingtalk | feishu | wecom | generic
+```
+
+- **QQ 邮箱授权码**：QQ 邮箱 → 设置 → 账号 → 开启 IMAP/SMTP 服务 → 发短信 → 得到 16 位授权码。
+- 邮件失败会自动退避 120 秒；手动点「测试邮箱通道」会强制重试，不被退避挡住。
+- Webhook 按 URL 自动识别钉钉/飞书/企业微信的负载格式，并检查 HTTP 200 里的 `errcode/code`；**暂不支持钉钉/飞书的"加签"**，请用自定义关键词或 IP 白名单。
+- 配置完可在看板告警中心点「测试邮箱通道 / 测试Webhook」验证，不必等故障。
+- 命令行体检：`.venv\Scripts\python.exe -m agri_logger.notifier --show-config`；只测邮件：`--email-only`；演练：`--dry-run`。
+
+### 7.3 固件配置
+
+文件：`firmware/hi3861/agri_logger/agri_logger_multi.c`
+
+| 常量 | 默认 | 说明 |
+|---|---|---|
+| `SINGLE_DEVICE_MODE` | `1` | `1` = 单设备，直接上报板载真实读数；`0` = 六棚逻辑设备（同一真实基准派生 6 个 zone） |
+| `FAULT_INJECT_INTERVAL` | `20` | 每隔多少轮注入一次故障；演示可调 2~3，正式跑 20~30，负样本设 0 |
+
+- 板载 **KEY（GPIO_14）** 运行时切换故障注入：开机默认 `FAULT:OFF`（纯真实数据），按一下 `FAULT:ON`，再按一下关闭；OLED 第 1 行同步显示。
+- 注入故障带设备号 `z=A`；真实硬件故障是 `z=-`，日志里可区分。
+- 改日志格式/字段顺序/时基后，务必把开机横幅的 `FW=v2.8` 版本号 +1，并同步 `tools/check_firmware.py` 的期望值。
+- 详细固件说明见 [`firmware/README.md`](firmware/README.md) 与 [`docs/04-firmware.md`](docs/04-firmware.md)。
+
+### 7.4 DevEco 配置
+
+`.deveco/deveco.ini` 关键项：
+
+| 键 | 说明 |
+|---|---|
+| `upload_port` / `monitor_port` | 板子实际 COM 号（换 USB 口会变） |
+| `upload_speed` | 921600（课程板默认） |
+| `compiler_bin_path` | `DevTools_Hi3861V100_v1.0` 的绝对路径，每台电脑不同 |
+| `board_frameworks.hb.build.product` | `wifiiot_hispark_pegasus@hisilicon` |
+
+---
+
+## 8. 常用命令
+
+```powershell
+# 环境
+.\run.ps1 -Check
+.\check_all.cmd
+
+# 串口
+.venv\Scripts\python.exe tools\serial_capture.py --check-env
+.venv\Scripts\python.exe tools\serial_capture.py --list
+.venv\Scripts\python.exe tools\serial_capture.py --monitor --port auto --duration 30
+.venv\Scripts\python.exe tools\serial_capture.py --port auto --out logs/raw.log
+
+# 固件
+.venv\Scripts\python.exe tools\check_firmware.py --port auto --duration 20
+.venv\Scripts\python.exe tools\sync_firmware.py
+.venv\Scripts\python.exe tools\sync_firmware.py --check
+.venv\Scripts\python.exe tools\sync_com_port.py
+
+# 模拟器 / 离线分析
+.venv\Scripts\python.exe tools\openharmony_log_sim.py --help
+.venv\Scripts\python.exe tools\analyze_demo.py --input eval/dataset/d2_v2.log
+
+# 告警
+.venv\Scripts\python.exe -m agri_logger.notifier --show-config
+.venv\Scripts\python.exe -m agri_logger.notifier --email-only
+.venv\Scripts\python.exe -m agri_logger.notifier --dry-run
+
+# 密钥扫描（提交前建议跑）
+.venv\Scripts\python.exe tools\secret_scan.py --tracked
+```
+
+---
+
+## 9. 常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 双击快捷方式没反应 | 看 `logs/launcher.log`；改用 `launcher.cmd`（带控制台）运行一次，报错会打印出来；快捷方式路径失效就重跑 `tools\make_shortcut.ps1` |
+| `No Python at 'C:\Users\...\python.exe'` | `.venv` 是从别的电脑拷来的，已失效。删掉 `.venv`，运行 `start_dashboard.cmd` 自动重建，或按 §4.2 手工重建 |
+| `ModuleNotFoundError: No module named 'serial'` | 依赖没装齐：`.venv\Scripts\python.exe -m pip install -r requirements.txt` |
+| 设备管理器没有 CH340 / 串口列表为空 | 装 `CH341SER.EXE`；换一条**数据线**；换 USB 口后点【刷新】；用 `serial_capture.py --list` 确认 |
+| 烧录报 `upload port is occupied` | ① 先关 DevEco Monitor / 看板 / `serial_capture.py`；② 端口号可能已变（`sync_com_port.py`）；③ 上一份看板留下孤儿子进程，重启电脑或结束 `python.exe` |
+| 烧录成功但串口没日志 | **物理拔插一次 USB**（HiBurn 停在 bootloader）；按复位键；确认波特率 115200；跑 `check_firmware.py --port auto` |
+| 看板一直「等待数据」 | 串口号选错 / 被 Monitor 占用 / 板子没复位。启动器状态条会直接给出原因；也可先 `serial_capture --monitor` 验证物理链路 |
+| 编译报 `undefined reference to AP3216C_Init` 等 | `BUILD.gn` 的 `sources` 没列出对应 BSP 驱动；用回 `firmware/hi3861/agri_logger/BUILD.gn`，不要手删 |
+| `compiler_bin_path` 无效 / 编译工具找不到 | 改 `deveco.ini` 或 DevEco 工程配置，指向自己的 `DevTools_Hi3861V100_v1.0`，不要照抄别人的 `E:\Code\...` |
+| 路径过长 / 中文路径导致编译失败 | SDK 解压到短英文根目录（如 `D:\Hi3861\`）；Python 也装全英文路径；整个路径 <260 字符 |
+| 8080 被占用 | 用 `netstat -ano` 找到监听 8080 的 PID 并结束进程，或改用 `--port 8081` |
+| LLM 一直不可用 | `.env` 没填 `DEEPSEEK_API_KEY` 或网络不通；看启动横幅；没有 Key 会自动用规则引擎，不影响主流程 |
+| 报告按钮提示"无法生成设备报告" | 当前是回放或模拟器模式；接真机后用 `--live` 启动（启动器默认就是 live） |
+| 邮件收不到 | ① `SMTP_PASSWORD` 填的是**授权码**不是登录密码；② 查垃圾邮件/广告邮件；③ 校园网可能封 465，改用 Webhook；④ 告警中心点「测试邮箱通道」看具体错误 |
+| 看板生成报告后没有告警 | 检查 `ALERT_MIN_SEVERITY`（P3 只写审计文件）、`ALERT_ENABLED`、`ALERT_DRY_RUN`；看 `logs/alerts.jsonl` 和告警中心「策略跳过」 |
+| 中文显示乱码 | 固件日志本身是 ASCII；终端乱码时把控制台/串口助手编码设为 UTF-8 或 GBK 对应项，波特率 115200 |
+
+更多真机踩坑记录见 [`docs/09-troubleshooting-log.md`](docs/09-troubleshooting-log.md)。
+
+---
+
+## 10. 文档地图
+
+| 文档 | 内容 |
+|---|---|
+| [README.md](README.md) | 本文：环境配置与使用说明 |
+| [docs/01-requirements.md](docs/01-requirements.md) | 选题定位、需求拆解、技术指标、评分对照 |
+| [docs/02-log-spec.md](docs/02-log-spec.md) | **日志规范白皮书**（字段字典、故障码/错误码、冻结正则）——改固件前必读 |
+| [docs/04-firmware.md](docs/04-firmware.md) | 固件开发、demo 选择、烧录与验证 |
+| [docs/06-llm-analysis.md](docs/06-llm-analysis.md) | LLM 分层调用、提示词、缓存与成本、三级降级 |
+| [docs/07-evaluation.md](docs/07-evaluation.md) | 评测方案、标注数据集、指标与消融实验 |
+| [docs/08-deliverables-and-defense.md](docs/08-deliverables-and-defense.md) | 交付物、报告大纲、答辩问题库 |
+| [docs/09-troubleshooting-log.md](docs/09-troubleshooting-log.md) | 真机调试踩坑记录与排查决策树 |
+| [docs/12-launcher.md](docs/12-launcher.md) | 图形启动器：端口选择、停止释放串口、快捷方式 |
+| [docs/13-alerting.md](docs/13-alerting.md) | 告警策略、四个通道、邮件可行性、常见故障 |
+| [docs/14-api-interface-spec.md](docs/14-api-interface-spec.md) | 19 个 HTTP 接口的字段/类型/轮询节奏 |
+| [docs/15-data-formats.md](docs/15-data-formats.md) | 从串口字节流到报告 Markdown 的 6 层数据格式 |
+| [docs/16-frontend-dev-guide.md](docs/16-frontend-dev-guide.md) | 前端文件组织、接入方式、六条硬规范、自检清单 |
+
+历史/参考文档（新版已退役，但仓库中保留）：`docs/03-hardware-and-wiring.md`（硬件接线）、`docs/05-python-pipeline.md`（Python 流水线）、`docs/10-data-authenticity.md`（数据真实性）、`docs/11-ppt-prompt-pack.md`（PPT 提示词）。
+
+---
+
+## 11. 数据口径与注意事项
+
+- **真实读数**：温度/湿度来自板载 SHT20，光照来自板载 AP3216C；环境值不做人工伪造。
+- **六棚**：6 个 zone 是同一真实基准派生出的逻辑设备，派生的是棚间差异，不是 6 份独立传感器数据。
+- **故障注入**：仅在按 KEY 后开启，日志带 `z=A`；关闭时设备端不产生任何注入日志。演示时建议"先展示干净状态，再按 KEY 展示故障识别"。
+- **报告来源**：真机报告在 `reports_live/`，模拟器报告在 `reports_llm/`；界面和报告正文都会标注数据来源与引擎，避免把模拟数据当真机结论。
+- **密钥**：`.env` 已被 `.gitignore` 忽略；提交前可跑 `tools/secret_scan.py --tracked`。SMTP 授权码/DeepSeek Key 不要写进代码或 README。
+- **SDK**：`hi3861_application/` 不入库；换电脑需要重新获取 SDK 并按 §5 集成。`firmware/` 是固件的版本源头，改固件请改 `firmware/` 再 `sync_firmware.py` 部署到 SDK。
+
+---
+
+## 12. 参考
+
+- 《OpenHarmony 开发板实验指导书 Windows 版 V2.1.15》第 1 章「开发环境搭建」（VSCode、DevEco Device Tool、SDK、编译、烧录、串口打印），第 5 章「常见问题」。
+- 项目内：[`docs/15-data-formats.md`](docs/15-data-formats.md)（日志/报告格式）、[`docs/14-api-interface-spec.md`](docs/14-api-interface-spec.md)（接口契约）、[`docs/16-frontend-dev-guide.md`](docs/16-frontend-dev-guide.md)（前端接入）。
